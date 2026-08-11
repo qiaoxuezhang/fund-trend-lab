@@ -505,7 +505,7 @@ async function refreshPortfolio({ silent = false } = {}) {
     refreshPortfolioResearch();
   } catch (error) {
     showToast(error.message);
-    state.nextRefreshAt = Date.now() + 60 * 1000;
+    state.nextRefreshAt = Date.now() + 10 * 60 * 1000;
   } finally {
     state.refreshingPortfolio = false;
     $("#refreshPortfolioButton").classList.remove("spinning");
@@ -534,9 +534,10 @@ async function refreshPortfolioResearch() {
 function updateRefreshCountdown() {
   if (!state.nextRefreshAt) return;
   const seconds = Math.max(0, Math.ceil((state.nextRefreshAt - Date.now()) / 1000));
-  const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const hours = Math.floor(seconds / 3600);
+  const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
   const remainder = String(seconds % 60).padStart(2, "0");
-  setText("#refreshCountdown", `${minutes}:${remainder}`);
+  setText("#refreshCountdown", hours ? `${String(hours).padStart(2, "0")}:${minutes}:${remainder}` : `${minutes}:${remainder}`);
   if (seconds === 0) refreshPortfolio({ silent: true });
 }
 

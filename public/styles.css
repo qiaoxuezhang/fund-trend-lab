@@ -168,6 +168,8 @@ button { color: inherit; }
 .portfolio-header { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px clamp(18px, 2.4vw, 34px); background: var(--surface); border-bottom: 1px solid var(--line); }
 .portfolio-header h1 { margin: 0; font-size: 22px; }
 .portfolio-header p { margin: 4px 0 0; color: var(--muted); font-size: 10px; }
+.local-data-notice { display: flex; align-items: center; gap: 7px; margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.local-data-notice strong { flex: 0 0 auto; padding: 3px 6px; border: 1px solid var(--positive); border-radius: 4px; color: var(--positive); font-size: 8px; }
 .portfolio-actions { display: flex; align-items: center; gap: 8px; }
 .command-button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); cursor: pointer; font-size: 10px; font-weight: 700; }
 .command-button:hover { background: var(--surface-2); }
@@ -633,6 +635,7 @@ button { color: inherit; }
   .view-switch button { white-space: nowrap; }
   .portfolio-header { display: grid; grid-template-columns: minmax(0, 1fr); }
   .portfolio-header h1 { white-space: nowrap; }
+  .local-data-notice { align-items: flex-start; }
   .portfolio-actions { justify-content: flex-start; }
   .fund-header { display: grid; }
   .nav-quote { text-align: left; }

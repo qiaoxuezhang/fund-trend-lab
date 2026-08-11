@@ -250,7 +250,13 @@ function marketStatus() {
   const tradingDay = weekday >= 1 && weekday <= 5;
   const open = tradingDay && ((minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900));
   const updateWindow = tradingDay && minutes >= 1080 && minutes < 1440;
-  return { open, updateWindow, label: open ? "A股交易时段" : updateWindow ? "等待官方净值更新" : "非交易时段" };
+  const refreshAfterSeconds = !tradingDay ? 6 * 60 * 60 : updateWindow ? 30 * 60 : open ? 60 * 60 : 2 * 60 * 60;
+  return {
+    open,
+    updateWindow,
+    refreshAfterSeconds,
+    label: open ? "交易时段 · 低频检查" : updateWindow ? "等待官方净值 · 30分钟检查" : tradingDay ? "非净值窗口 · 2小时检查" : "休市日 · 6小时检查"
+  };
 }
 
 function assessEntry(analysis) {
@@ -334,12 +340,13 @@ async function buildPortfolio(codes, profile) {
     }
   });
   items.sort((left, right) => (right.entry?.priority ?? 0) - (left.entry?.priority ?? 0) || (right.signal?.score ?? -999) - (left.signal?.score ?? -999));
+  const market = marketStatus();
   return {
     items,
     generatedAt: new Date().toISOString(),
     expectedOfficialDate: expectedDate,
-    market: marketStatus(),
-    refreshAfterSeconds: 300,
+    market,
+    refreshAfterSeconds: market.refreshAfterSeconds,
     methodology: "仅使用官方已披露净值生成信号；盘中估值不作为入仓依据。"
   };
 }

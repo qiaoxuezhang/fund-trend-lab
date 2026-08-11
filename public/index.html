@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="面向中国场外基金的净值趋势与风险分析工具">
   <meta name="theme-color" content="#17201f">
-  <meta name="robots" content="index, follow">
+  <meta name="robots" content="noindex, nofollow">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="净值罗盘">
   <meta property="og:title" content="净值罗盘 | 场外基金趋势实验室">
@@ -13,7 +13,7 @@
   <title>净值罗盘 | 场外基金趋势实验室</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260811-review3">
+  <link rel="stylesheet" href="/styles.css?v=20260811-free1">
 </head>
 <body>
   <header class="topbar">
@@ -87,6 +87,7 @@
             <span class="eyebrow">官方净值自动跟踪</span>
             <h1>我的基金</h1>
             <p>首页只保留当前动作与关键数据，完整指标进入单基分析。</p>
+            <div class="local-data-notice"><strong>仅存当前设备</strong><span>自选、分组、成本、交易记录和目标不会写入服务器数据库</span></div>
           </div>
           <div class="portfolio-actions">
             <button class="command-button" id="notificationButton">
@@ -96,7 +97,7 @@
             <button class="icon-button" id="strategyButton" title="策略与止盈目标" aria-label="策略与止盈目标">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h3m4 0h9M14 4v6M7 14v6"/></svg>
             </button>
-            <button class="icon-button" id="privacyButton" title="隐私与跨设备" aria-label="隐私与跨设备">
+            <button class="icon-button" id="privacyButton" title="本地隐私与加密备份" aria-label="本地隐私与加密备份">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.8 2.8 8.2 7 10 4.2-1.8 7-5.2 7-10V6l-7-3Zm-3 9 2 2 4-4"/></svg>
             </button>
             <button class="icon-button" id="refreshPortfolioButton" title="立即刷新组合" aria-label="立即刷新组合">
@@ -119,7 +120,7 @@
             <button data-summary-action="sell"><span>风险退出</span><strong id="sellCount">--</strong></button>
           </div>
           <div class="target-summary"><span>默认止盈目标</span><strong id="defaultTargetLabel">20%</strong><button class="target-settings-link" id="targetSettingsButton" type="button">设置目标</button></div>
-          <div class="refresh-summary"><span>自动刷新</span><strong id="refreshCountdown">05:00</strong><small id="marketStatus">读取市场状态</small></div>
+          <div class="refresh-summary"><span>低频检查</span><strong id="refreshCountdown">--:--</strong><small id="marketStatus">读取市场状态</small></div>
         </div>
 
         <div class="decision-note">
@@ -401,7 +402,7 @@
   </div>
   <div class="modal-backdrop" id="privacyModal" hidden>
     <section class="group-modal privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacyModalTitle">
-      <div class="modal-heading"><div><span class="eyebrow">本地优先</span><h2 id="privacyModalTitle">隐私与跨设备</h2></div><button class="icon-button" id="closePrivacyModal" aria-label="关闭隐私设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="modal-heading"><div><span class="eyebrow">本地优先</span><h2 id="privacyModalTitle">本地隐私与备份</h2></div><button class="icon-button" id="closePrivacyModal" aria-label="关闭隐私设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
       <div class="privacy-status"><strong id="privateFundCount">0 只本地基金</strong><span>基金分组、持仓成本、止盈目标和风险风格保存在当前浏览器，不写入服务器数据库。</span></div>
       <label class="strategy-field"><span>保险箱密码</span><input id="vaultPassphrase" type="password" minlength="8" autocomplete="new-password" placeholder="至少8个字符"></label>
       <label class="strategy-field"><span>重复密码（导出时）</span><input id="vaultPassphraseConfirm" type="password" minlength="8" autocomplete="new-password" placeholder="再次输入"></label>
@@ -413,12 +414,12 @@
       </div>
       <div class="privacy-facts">
         <p><strong>新访客隔离</strong><span>新浏览器默认空组合，不会看到其他人的基金。</span></p>
-        <p><strong>跨设备迁移</strong><span>保险箱在浏览器内加密，文件和密码需要分开保管。</span></p>
+        <p><strong>手动迁移</strong><span>保险箱在浏览器内加密；需要换设备时手动导出和导入，文件与密码分开保管。</span></p>
         <p><strong>服务器边界</strong><span>服务器只临时处理查询所需的基金代码和公开市场数据，不接收持仓金额、成本、分组和目标。</span></p>
       </div>
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script type="module" src="/app.js?v=20260811-review3"></script>
+  <script type="module" src="/app.js?v=20260811-free1"></script>
 </body>
 </html>

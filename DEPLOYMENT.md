@@ -4,11 +4,11 @@
 
 ## 推荐结构
 
-长期推广建议使用“GitHub 私有仓库 + Render Web Service + 平台 HTTPS 域名”。客户的自选基金、分组、成本和止盈目标仍保存在各自浏览器中，云服务只处理公开基金数据查询与缓存。
+当前零成本路线使用“GitHub 公开仓库 + Render Free Web Service + Render HTTPS 域名”。客户的自选基金、分组、成本、交易记录和止盈目标仍保存在各自浏览器中，云服务只处理公开基金数据查询与可重新生成的缓存。
 
 ## 部署到 Render
 
-1. 将本目录提交到自己的 GitHub 私有仓库。
+1. 使用现有 GitHub 仓库 `qiaoxuezhang/fund-trend-lab`。
 2. 在 Render 控制台选择 `New > Blueprint`，连接该仓库。
 3. Render 会读取根目录的 `render.yaml`，以 Docker 方式创建服务。
 4. 等待 `/api/health` 返回成功后，使用 Render 分配的 HTTPS 地址访问。
@@ -17,12 +17,12 @@
 ```text
 HOST=0.0.0.0
 NODE_ENV=production
-ALLOW_INDEXING=true
+ALLOW_INDEXING=false
 ```
 
 6. 需要品牌域名时，在 Render 的 Custom Domains 中添加域名，再按控制台提示配置 DNS。
 
-免费实例适合演示和早期测试；正式推广前应根据访问量、冷启动和可用性要求选择合适实例，并配置平台监控。
+免费实例适合当前约 10 人的邀请测试。长时间无人访问后的首次打开可能需要等待服务启动；服务端不保存客户数据，因此休眠和重新部署不影响浏览器本地组合。
 
 ## Cloudflare 固定隧道方案
 
@@ -54,5 +54,5 @@ http://192.168.31.151:4173/
 - 首页和单基金分析在手机、电脑上均无横向溢出。
 - 新浏览器首次访问时组合为空。
 - HTTPS 有效，分享按钮复制或分享的是正式公网域名。
-- 生产环境设置 `ALLOW_INDEXING=true`；内部测试环境保持 `false`。
+- 当前邀请测试环境设置 `ALLOW_INDEXING=false`，并同时通过页面 meta 标签和响应头禁止搜索引擎索引。
 - 不在源码、日志或环境变量中存放客户持仓、密码与保险箱文件。

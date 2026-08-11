@@ -1,5 +1,5 @@
-const CACHE_NAME = "fund-trend-shell-v3";
-const SHELL = ["/", "/styles.css?v=20260811-review3", "/app.js?v=20260811-review3", "/strategy.js", "/vault.js", "/manifest.webmanifest", "/icon.svg"];
+const CACHE_NAME = "fund-trend-shell-v4";
+const SHELL = ["/", "/styles.css?v=20260811-free1", "/app.js?v=20260811-free1", "/strategy.js", "/vault.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fund-trend-lab
+    runtime: docker
+    region: singapore
+    plan: free
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_INDEXING
+        value: "true"

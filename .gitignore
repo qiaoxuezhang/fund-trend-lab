@@ -1,0 +1,6 @@
+.cache/
+node_modules/
+*.log
+.env
+fund-trend-vault-*.json
+.data/

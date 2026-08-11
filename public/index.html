@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="面向中国场外基金的净值趋势与风险分析工具">
+  <meta name="theme-color" content="#17201f">
+  <meta name="robots" content="index, follow">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="净值罗盘">
+  <meta property="og:title" content="净值罗盘 | 场外基金趋势实验室">
+  <meta property="og:description" content="使用正式净值、趋势、风险与持仓研究辅助场外基金决策。">
+  <title>净值罗盘 | 场外基金趋势实验室</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=20260811-review3">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark" aria-hidden="true">N</div>
+      <div>
+        <strong>净值罗盘</strong>
+        <span>场外基金趋势实验室</span>
+      </div>
+    </div>
+    <nav class="view-switch" aria-label="主要视图">
+      <button class="active" data-view="portfolio">组合监控</button>
+      <button data-view="detail">单基分析</button>
+    </nav>
+    <div class="topbar-actions">
+      <span class="data-status"><i></i><span id="sourceStatus">正在连接数据</span></span>
+      <button class="icon-button" id="installButton" title="安装到设备" aria-label="安装到设备" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg>
+      </button>
+      <button class="icon-button" id="shareButton" title="分享当前平台" aria-label="分享当前平台">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0 4 4m-4-4L8 8M5 12v7h14v-7"/></svg>
+      </button>
+      <button class="icon-button" id="themeButton" title="切换明暗主题" aria-label="切换明暗主题">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <section class="search-section">
+        <label for="fundSearch">查找基金</label>
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
+          <input id="fundSearch" autocomplete="off" placeholder="代码或基金名称">
+          <span class="search-spinner" id="searchSpinner"></span>
+        </div>
+        <div class="search-results" id="searchResults" hidden></div>
+      </section>
+
+      <section class="watch-section">
+        <div class="section-heading">
+          <span>我的关注</span>
+          <button class="icon-button small" id="addCurrentButton" title="将当前基金加入关注" aria-label="加入关注">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="watch-list" id="watchList"></div>
+      </section>
+
+      <section class="settings-section">
+        <span class="sidebar-label">信号风格</span>
+        <div class="segmented vertical" id="profileControl">
+          <button data-profile="conservative">稳健</button>
+          <button class="active" data-profile="balanced">均衡</button>
+          <button data-profile="aggressive">积极</button>
+        </div>
+        <p class="setting-note" id="profileNote">均衡模式兼顾趋势确认与信号灵敏度。</p>
+      </section>
+
+      <div class="sidebar-footnote">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Zm0-6v-5m0-3h.01"/></svg>
+        <span>指标用于研究与仓位纪律，不构成收益承诺或个性化投资建议。</span>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <section class="portfolio-view" id="portfolioView">
+        <div class="portfolio-header">
+          <div>
+            <span class="eyebrow">官方净值自动跟踪</span>
+            <h1>我的基金</h1>
+            <p>首页只保留当前动作与关键数据，完整指标进入单基分析。</p>
+          </div>
+          <div class="portfolio-actions">
+            <button class="command-button" id="notificationButton">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+              <span>开启提醒</span>
+            </button>
+            <button class="icon-button" id="strategyButton" title="策略与止盈目标" aria-label="策略与止盈目标">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h3m4 0h9M14 4v6M7 14v6"/></svg>
+            </button>
+            <button class="icon-button" id="privacyButton" title="隐私与跨设备" aria-label="隐私与跨设备">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.8 2.8 8.2 7 10 4.2-1.8 7-5.2 7-10V6l-7-3Zm-3 9 2 2 4-4"/></svg>
+            </button>
+            <button class="icon-button" id="refreshPortfolioButton" title="立即刷新组合" aria-label="立即刷新组合">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0 1 11.6-2.6L20 9M4 15l2.3 2.6A7 7 0 0 0 17.9 15"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="portfolio-summary">
+          <div class="portfolio-total">
+            <span>跟踪持仓参考金额</span>
+            <strong id="portfolioValue">--</strong>
+            <small id="portfolioProfit">依据截图金额建立，待官方净值校准</small>
+          </div>
+          <div class="action-summary" aria-label="当前动作统计">
+            <button data-summary-action="base"><span>分批建仓</span><strong id="baseCount">--</strong></button>
+            <button data-summary-action="hold"><span>持有观察</span><strong id="holdCount">--</strong></button>
+            <button data-summary-action="wait"><span>等待确认</span><strong id="waitCount">--</strong></button>
+            <button data-summary-action="take-profit"><span>分批止盈</span><strong id="takeProfitCount">--</strong></button>
+            <button data-summary-action="sell"><span>风险退出</span><strong id="sellCount">--</strong></button>
+          </div>
+          <div class="target-summary"><span>默认止盈目标</span><strong id="defaultTargetLabel">20%</strong><button class="target-settings-link" id="targetSettingsButton" type="button">设置目标</button></div>
+          <div class="refresh-summary"><span>自动刷新</span><strong id="refreshCountdown">05:00</strong><small id="marketStatus">读取市场状态</small></div>
+        </div>
+
+        <div class="decision-note">
+          <strong class="quality-status" id="qualityStatus">校验中</strong>
+          <span>动作只使用正式净值；重仓持股、财报和消息用于中期验证，不把盘中估值当成真实净值。</span>
+        </div>
+
+        <div class="prompt-guide">
+          <strong>研判口径</strong>
+          <span><i class="base"></i><b>分批建仓</b> 净值校验、趋势阈值、指标同向率和风险过滤均通过</span>
+          <span><i class="hold"></i><b>持有观察</b> 未触发加仓或退出条件，跟踪中期结构</span>
+          <span><i class="wait"></i><b>等待确认</b> 数据、样本或指标同向率不足</span>
+          <span><i class="take-profit"></i><b>分批止盈</b> 达到客户目标收益，按计划逐步兑现</span>
+          <span><i class="sell"></i><b>风险退出</b> 中长期弱势达到防守阈值</span>
+        </div>
+
+        <section class="trend-leaders-band" aria-labelledby="trendLeadersTitle">
+          <div class="trend-leaders-heading">
+            <div><span class="eyebrow">当前自选对比</span><h2 id="trendLeadersTitle">趋势强度前三</h2></div>
+            <p>仅在当前浏览器的关注基金中比较；同一基金 A/C 份额合并为一类，保留趋势更强的代表份额。</p>
+          </div>
+          <div class="trend-leaders" id="trendLeaders"><div class="trend-leaders-empty">正在计算自选基金趋势</div></div>
+        </section>
+
+        <section class="market-opportunities-band" aria-labelledby="marketOpportunitiesTitle">
+          <div class="market-opportunities-heading">
+            <div><span class="eyebrow">公开排行交叉验证</span><h2 id="marketOpportunitiesTitle">全市场板块代表</h2></div>
+            <div><p>从近3个月强势候选中识别最近披露持仓，同一主导板块只保留一只，再验证趋势、风险与持仓财务。</p><span id="marketOpportunitiesUpdated">正在扫描公开市场候选</span></div>
+          </div>
+          <div class="market-opportunities" id="marketOpportunities"><div class="market-opportunities-empty">首次扫描需要读取候选基金净值和持仓，请稍候</div></div>
+        </section>
+
+        <div class="portfolio-toolbar">
+          <div class="portfolio-filters">
+            <label class="group-select">关注分组
+              <select id="portfolioGroup">
+                <option value="all">全部分组</option>
+              </select>
+            </label>
+            <button class="icon-button" id="manageGroupsButton" title="管理客户分组" aria-label="管理客户分组">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11m4 0h3M3 17h3m4 0h11M14 4v6M6 14v6"/></svg>
+            </button>
+            <div class="segmented" id="portfolioFilter">
+              <button class="active" data-filter="all">全部状态</button>
+              <button data-filter="base">分批建仓</button>
+              <button data-filter="hold">持有观察</button>
+              <button data-filter="wait">等待确认</button>
+              <button data-filter="take-profit">分批止盈</button>
+              <button data-filter="sell">风险退出</button>
+            </div>
+          </div>
+          <div class="portfolio-updated"><i></i><span id="portfolioUpdated">正在读取组合数据</span></div>
+        </div>
+
+        <div class="portfolio-table-wrap">
+          <table class="portfolio-table">
+            <thead><tr><th>基金</th><th>官方净值</th><th>持有收益</th><th>趋势等级</th><th>当前动作</th><th></th></tr></thead>
+            <tbody id="portfolioRows"></tbody>
+          </table>
+          <div class="portfolio-empty" id="portfolioEmpty" hidden>当前筛选条件下没有基金</div>
+        </div>
+      </section>
+
+      <div id="detailView" hidden>
+      <section class="fund-header">
+        <div class="fund-identity">
+          <div class="fund-title-row">
+            <h1 id="fundName">加载中</h1>
+            <span class="code-badge" id="fundCode">------</span>
+          </div>
+          <div class="fund-meta">
+            <span id="navDate">最近净值 --</span>
+            <span id="dataSource">数据源 --</span>
+          </div>
+        </div>
+        <div class="nav-quote">
+          <span class="quote-label">单位净值</span>
+          <div><strong id="currentNav">--</strong><span id="dailyChange" class="change">--</span></div>
+        </div>
+      </section>
+
+      <section class="signal-band" id="signalBand">
+        <div class="score-block">
+          <div class="score-ring" id="scoreRing"><span id="trendScore">--</span><small>-10～+10</small></div>
+          <div>
+            <span class="eyebrow">中长期趋势结论</span>
+            <h2 id="signalTitle">计算中</h2>
+            <p id="signalAction">正在汇总趋势、动能和风险指标。</p>
+            <p class="score-meaning">趋势等级为 -10.0 至 +10.0：+6 以上为强上行结构，+3 至 +5.9 为改善，-2.9 至 +2.9 为混合，-3 至 -5.9 为偏弱，-6 以下进入防守。它衡量中期结构，不预测明天涨跌。</p>
+          </div>
+        </div>
+        <div class="confidence-block">
+          <div class="confidence-line"><span>有效指标同向率</span><strong id="confidenceValue">--</strong></div>
+          <div class="confidence-track"><i id="confidenceBar"></i></div>
+          <p id="confidenceCopy">等待指标计算</p>
+        </div>
+        <div class="analog-block">
+          <span class="eyebrow">历史相似状态 · 后20个净值日</span>
+          <div class="analog-grid">
+            <div><strong id="analogRate">--</strong><span>上涨占比</span></div>
+            <div><strong id="analogMedian">--</strong><span>收益中位数</span></div>
+            <div><strong id="analogCount">--</strong><span>历史样本</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="toolbar-band">
+        <div class="metric-strip">
+          <div><span>近1月</span><strong id="returnMonth">--</strong></div>
+          <div><span>近3月</span><strong id="returnQuarter">--</strong></div>
+          <div><span>近1年</span><strong id="returnYear">--</strong></div>
+          <div><span>当前回撤</span><strong id="currentDrawdown">--</strong></div>
+          <div><span>年化波动</span><strong id="volatility">--</strong></div>
+        </div>
+        <div class="segmented" id="rangeControl" aria-label="图表时间范围">
+          <button data-range="3m">3月</button>
+          <button data-range="6m">6月</button>
+          <button class="active" data-range="1y">1年</button>
+          <button data-range="3y">3年</button>
+          <button data-range="all">全部</button>
+        </div>
+      </section>
+
+      <section class="chart-workspace">
+        <div class="chart-heading">
+          <div>
+            <h2>净值与趋势结构</h2>
+            <p>NAV-KDJ 使用滚动净值区间，不等同于场内证券标准 KDJ</p>
+          </div>
+          <div class="legend" id="mainLegend">
+            <span><i style="--legend:#0e766e"></i>累计净值</span>
+            <span><i style="--legend:#d85a42"></i>MA5</span>
+            <span><i style="--legend:#d78b2e"></i>MA10</span>
+            <span><i style="--legend:#7d6dac"></i>MA20</span>
+            <span><i style="--legend:#477da8"></i>MA60</span>
+            <span><i style="--legend:#67706d"></i>MA120</span>
+            <span><i class="trade-legend buy"></i>历史买入</span>
+            <span><i class="trade-legend sell"></i>历史卖出</span>
+          </div>
+        </div>
+        <div class="chart-panel primary-chart"><canvas id="navChart" role="img" aria-label="基金累计净值与移动平均线趋势图"></canvas><div class="chart-tooltip" id="navTooltip"></div></div>
+        <div class="indicator-grid">
+          <div class="indicator-panel">
+            <div class="indicator-title"><strong>NAV-KDJ</strong><span id="kdjValues">K -- · D -- · J --</span></div>
+            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>K 快线</span><span><i style="--legend:#d78b2e"></i>D 慢线</span><span><i style="--legend:#73629d"></i>J 敏感线</span></div>
+            <div class="chart-panel"><canvas id="kdjChart" role="img" aria-label="基金净值 KDJ 指标趋势图"></canvas><div class="chart-tooltip" id="kdjTooltip"></div></div>
+          </div>
+          <div class="indicator-panel">
+            <div class="indicator-title"><strong>MACD</strong><span id="macdValues">DIF -- · DEA --</span></div>
+            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>DIF</span><span><i style="--legend:#d78b2e"></i>DEA</span><span><i class="bar-legend"></i>动能柱</span></div>
+            <div class="chart-panel"><canvas id="macdChart" role="img" aria-label="基金净值 MACD 指标趋势图"></canvas><div class="chart-tooltip" id="macdTooltip"></div></div>
+          </div>
+          <div class="indicator-panel">
+            <div class="indicator-title"><strong>RSI · 14</strong><span id="rsiValue">--</span></div>
+            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>RSI</span><span><i class="reference-legend"></i>30 / 70 参考线</span></div>
+            <div class="chart-panel"><canvas id="rsiChart" role="img" aria-label="基金净值 RSI 指标趋势图"></canvas><div class="chart-tooltip" id="rsiTooltip"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trade-journal-band" aria-labelledby="tradeJournalTitle">
+        <div class="trade-journal-heading">
+          <div><span class="eyebrow">本地交易台账</span><h2 id="tradeJournalTitle">历史买卖点与交易量</h2><p>记录实际确认日期、净值、金额和份额，买卖标记会同步到净值图。场外基金没有连续盘口成交量，页面不使用虚构的日成交量。</p></div>
+          <div class="trade-summary" aria-label="交易记录汇总">
+            <div><span>累计买入</span><strong id="tradeBuyTotal">--</strong></div>
+            <div><span>累计卖出</span><strong id="tradeSellTotal">--</strong></div>
+            <div><span>净投入</span><strong id="tradeNetAmount">--</strong></div>
+            <div><span>记录数</span><strong id="tradeRecordCount">0</strong></div>
+          </div>
+        </div>
+        <form class="trade-entry-form" id="tradeEntryForm">
+          <label><span>确认日期</span><input id="tradeDate" type="date" required></label>
+          <label><span>交易方向</span><select id="tradeType"><option value="buy">买入</option><option value="sell">卖出</option></select></label>
+          <label><span>确认净值</span><input id="tradeNav" type="number" min="0.0001" step="0.0001" required placeholder="0.0000"></label>
+          <label><span>交易金额</span><input id="tradeAmount" type="number" min="0" step="0.01" placeholder="元，可选"></label>
+          <label><span>确认份额</span><input id="tradeUnits" type="number" min="0" step="0.01" placeholder="份，可选"></label>
+          <label class="trade-note-field"><span>备注</span><input id="tradeNote" maxlength="60" placeholder="如：定投、回撤加仓、目标止盈"></label>
+          <button class="command-button primary" type="submit">记录交易</button>
+        </form>
+        <div class="trade-history-wrap">
+          <table class="trade-history-table">
+            <thead><tr><th>日期</th><th>方向</th><th>确认净值</th><th>金额</th><th>份额</th><th>备注</th><th></th></tr></thead>
+            <tbody id="tradeHistoryRows"></tbody>
+          </table>
+          <div class="trade-history-empty" id="tradeHistoryEmpty">当前基金还没有交易记录</div>
+        </div>
+      </section>
+
+      <section class="analysis-band">
+        <div class="analysis-column">
+          <div class="section-title">
+            <div><span class="eyebrow">可解释信号</span><h2>趋势等级依据</h2></div>
+            <span class="count-badge" id="factorCount">0 项</span>
+          </div>
+          <div class="factor-list" id="factorList"></div>
+        </div>
+
+        <div class="backtest-column">
+          <div class="section-title">
+            <div><span class="eyebrow">历史纪律检查</span><h2>规则回测</h2></div>
+            <span class="subtle-badge" id="backtestRange">当前区间</span>
+          </div>
+          <div class="backtest-comparison">
+            <div><span>信号策略</span><strong id="strategyReturn">--</strong><small id="strategyDrawdown">最大回撤 --</small></div>
+            <div><span>同期持有</span><strong id="benchmarkReturn">--</strong><small id="benchmarkDrawdown">最大回撤 --</small></div>
+          </div>
+          <div class="backtest-meta">
+            <div><span>调仓次数</span><strong id="tradeCount">--</strong></div>
+            <div><span>在场比例</span><strong id="investedRatio">--</strong></div>
+            <div><span>单次成本假设</span><strong id="transactionCost">--</strong></div>
+          </div>
+          <p class="backtest-note">信号在当日净值确认后，于下一净值日生效。结果仅用于检查规则稳定性，未计入每只基金不同的申赎确认日、持有期费率和限购规则。</p>
+        </div>
+      </section>
+
+      <section class="research-band" id="fundResearchSection">
+        <div class="research-heading">
+          <div><span class="eyebrow">季度持仓与公司研究</span><h2>持仓基本面</h2><p>财务数据和公告按披露日期展示；基金持仓来自最近一期公开报告，不代表今日实时仓位。新闻与政策仅作背景核验，不直接计入买卖分。</p></div>
+          <div class="research-score"><span>基本面分</span><strong id="fundamentalScore">--</strong><small id="researchCoverage">读取中</small></div>
+        </div>
+        <div class="research-metrics">
+          <div><span>持仓报告期</span><strong id="holdingsReportDate">--</strong></div>
+          <div><span>前十大集中度</span><strong id="holdingsConcentration">--</strong></div>
+          <div><span>系统行业标签</span><strong id="systemTags">--</strong></div>
+          <div><span>研究结论</span><strong id="researchConclusion">--</strong></div>
+        </div>
+        <div class="holdings-research-layout">
+          <div class="holdings-table-wrap">
+            <table class="holdings-table">
+              <thead><tr><th>公司</th><th>行业</th><th>占净值</th><th>持仓变化</th><th>财报</th><th>研究分</th></tr></thead>
+              <tbody id="holdingsRows"><tr><td colspan="6">正在读取最近披露持仓</td></tr></tbody>
+            </table>
+          </div>
+          <aside class="company-research" id="companyResearch">
+            <div class="company-placeholder"><strong>选择一家持仓公司</strong><span>查看最新财报、利润变化、公告、新闻与行业政策信息。</span></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="method-band">
+        <div>
+          <span class="eyebrow">使用原则</span>
+          <h2>先看趋势，再看风险，最后决定仓位</h2>
+        </div>
+        <div class="method-steps">
+          <div><b>01</b><strong>趋势确认</strong><span>净值与 MA20、MA60 的位置和方向</span></div>
+          <div><b>02</b><strong>动能共振</strong><span>NAV-KDJ、MACD、RSI 是否指向一致</span></div>
+          <div><b>03</b><strong>风险过滤</strong><span>回撤、波动与追涨风险是否可接受</span></div>
+          <div><b>04</b><strong>分批执行</strong><span>用仓位和时间分散单一信号失误</span></div>
+        </div>
+      </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="loading-overlay" id="loadingOverlay"><div class="loading-mark">N</div><strong>正在读取基金净值</strong><span>计算趋势、动能与风险指标</span></div>
+  <div class="modal-backdrop" id="groupModal" hidden>
+    <section class="group-modal" role="dialog" aria-modal="true" aria-labelledby="groupModalTitle">
+      <div class="modal-heading"><div><span class="eyebrow">客户自定义</span><h2 id="groupModalTitle">管理关注分组</h2></div><button class="icon-button" id="closeGroupModal" aria-label="关闭分组管理"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="new-group-row"><input id="newGroupName" maxlength="20" placeholder="输入新分组名称"><button class="command-button" id="createGroupButton">新建分组</button></div>
+      <div class="custom-group-list" id="customGroupList"></div>
+      <p>基金可在组合表格的分组菜单中移动。删除分组后，其中基金会移动到“未分组”。</p>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="strategyModal" hidden>
+    <section class="group-modal strategy-modal" role="dialog" aria-modal="true" aria-labelledby="strategyModalTitle">
+      <div class="modal-heading"><div><span class="eyebrow">客户策略</span><h2 id="strategyModalTitle">止盈目标与持仓成本</h2></div><button class="icon-button" id="closeStrategyModal" aria-label="关闭策略设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <label class="strategy-field"><span>默认分批止盈目标</span><div class="suffix-input"><input id="defaultTakeProfitInput" type="number" min="5" max="200" step="1"><b>%</b></div><small>未单独设置的基金继承该目标。</small></label>
+      <div class="strategy-divider"></div>
+      <label class="strategy-field"><span>选择基金</span><select id="strategyFundSelect"></select></label>
+      <div class="strategy-grid">
+        <label class="strategy-field"><span>单独止盈目标</span><div class="suffix-input"><input id="fundTakeProfitInput" type="number" min="5" max="200" step="1" placeholder="继承默认"><b>%</b></div></label>
+        <label class="strategy-field"><span>持仓成本净值</span><input id="fundCostNavInput" type="number" min="0" step="0.0001" placeholder="可选"></label>
+      </div>
+      <p class="strategy-note" id="strategyFundNote">成本净值用于计算客户真实持有收益；留空时沿用现有参考成本。</p>
+      <div class="modal-actions"><button class="command-button" id="resetFundStrategyButton">恢复该基金默认</button><button class="command-button primary" id="saveStrategyButton">保存设置</button></div>
+      <p>系统建议基于正式净值、趋势、动能、风险和公开基本面信息。所有建仓提示均按分批执行表达，实际仓位仍应受单只基金上限、资金期限和个人风险承受能力约束。</p>
+    </section>
+  </div>
+  <div class="modal-backdrop" id="privacyModal" hidden>
+    <section class="group-modal privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacyModalTitle">
+      <div class="modal-heading"><div><span class="eyebrow">本地优先</span><h2 id="privacyModalTitle">隐私与跨设备</h2></div><button class="icon-button" id="closePrivacyModal" aria-label="关闭隐私设置"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+      <div class="privacy-status"><strong id="privateFundCount">0 只本地基金</strong><span>基金分组、持仓成本、止盈目标和风险风格保存在当前浏览器，不写入服务器数据库。</span></div>
+      <label class="strategy-field"><span>保险箱密码</span><input id="vaultPassphrase" type="password" minlength="8" autocomplete="new-password" placeholder="至少8个字符"></label>
+      <label class="strategy-field"><span>重复密码（导出时）</span><input id="vaultPassphraseConfirm" type="password" minlength="8" autocomplete="new-password" placeholder="再次输入"></label>
+      <div class="privacy-actions">
+        <button class="command-button primary" id="exportVaultButton">导出加密保险箱</button>
+        <button class="command-button" id="chooseVaultButton">导入加密保险箱</button>
+        <button class="command-button danger" id="clearPrivateDataButton">清除当前浏览器数据</button>
+        <input id="vaultFileInput" type="file" accept="application/json,.json" aria-label="选择加密保险箱文件" hidden>
+      </div>
+      <div class="privacy-facts">
+        <p><strong>新访客隔离</strong><span>新浏览器默认空组合，不会看到其他人的基金。</span></p>
+        <p><strong>跨设备迁移</strong><span>保险箱在浏览器内加密，文件和密码需要分开保管。</span></p>
+        <p><strong>服务器边界</strong><span>服务器只临时处理查询所需的基金代码和公开市场数据，不接收持仓金额、成本、分组和目标。</span></p>
+      </div>
+    </section>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script type="module" src="/app.js?v=20260811-review3"></script>
+</body>
+</html>

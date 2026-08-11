@@ -1,0 +1,19 @@
+{
+  "name": "净值罗盘 - 场外基金趋势实验室",
+  "short_name": "净值罗盘",
+  "description": "使用正式净值、趋势、风险与持仓研究辅助场外基金决策。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f4",
+  "theme_color": "#17201f",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

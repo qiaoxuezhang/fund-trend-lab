@@ -13,3 +13,7 @@ services:
         value: production
       - key: ALLOW_INDEXING
         value: "false"
+      - key: APP_ACCESS_PASSWORD
+        sync: false
+      - key: APP_SESSION_SECRET
+        generateValue: true

@@ -1,4 +1,5 @@
 import http from "node:http";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -22,6 +23,11 @@ const researchCacheDir = path.join(cacheDir, "research");
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 const allowIndexing = process.env.ALLOW_INDEXING === "true";
+const accessPassword = String(process.env.APP_ACCESS_PASSWORD || "");
+const sessionSecret = String(process.env.APP_SESSION_SECRET || accessPassword);
+const authEnabled = accessPassword.length > 0;
+const AUTH_COOKIE = "fund_trend_access";
+const AUTH_MAX_AGE = 7 * 24 * 60 * 60;
 const memoryCache = new Map();
 const researchMemoryCache = new Map();
 const rateBuckets = new Map();
@@ -41,6 +47,62 @@ const types = {
 function json(response, status, body) {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
   response.end(JSON.stringify(body));
+}
+
+function secureEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function cookieValue(request, name) {
+  const cookies = String(request.headers.cookie || "").split(";");
+  for (const cookie of cookies) {
+    const [key, ...value] = cookie.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
+
+function signSession(expiry) {
+  return createHmac("sha256", sessionSecret).update(String(expiry)).digest("hex");
+}
+
+function validSession(request) {
+  if (!authEnabled) return true;
+  const token = cookieValue(request, AUTH_COOKIE);
+  if (!token) return false;
+  const [expiryText, signature] = token.split(".");
+  const expiry = Number(expiryText);
+  return Number.isFinite(expiry)
+    && expiry > Math.floor(Date.now() / 1000)
+    && secureEqual(signature || "", signSession(expiry));
+}
+
+function setSessionCookie(request, response) {
+  const expiry = Math.floor(Date.now() / 1000) + AUTH_MAX_AGE;
+  const secure = process.env.NODE_ENV === "production" || request.headers["x-forwarded-proto"] === "https";
+  response.setHeader("set-cookie", `${AUTH_COOKIE}=${expiry}.${signSession(expiry)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${AUTH_MAX_AGE}${secure ? "; Secure" : ""}`);
+}
+
+function clearSessionCookie(request, response) {
+  const secure = process.env.NODE_ENV === "production" || request.headers["x-forwarded-proto"] === "https";
+  response.setHeader("set-cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? "; Secure" : ""}`);
+}
+
+async function handleAuth(request, response, url) {
+  if (url.pathname === "/api/auth/status") return json(response, 200, { enabled: authEnabled, authenticated: validSession(request) });
+  if (url.pathname === "/api/auth/login" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    if (!authEnabled || !secureEqual(body.password || "", accessPassword)) return json(response, 401, { error: "访问密码不正确" });
+    setSessionCookie(request, response);
+    return json(response, 200, { ok: true });
+  }
+  if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+    clearSessionCookie(request, response);
+    return json(response, 200, { ok: true });
+  }
+  return json(response, 404, { error: "认证接口不存在" });
 }
 
 function applySecurityHeaders(response) {
@@ -73,20 +135,20 @@ function clientAddress(request) {
   return String(request.headers["cf-connecting-ip"] || request.headers["x-forwarded-for"] || request.socket.remoteAddress || "unknown").split(",")[0].trim();
 }
 
-function rateLimit(request, response) {
+function rateLimit(request, response, { limit = 120, windowMs = 60_000, scope = "api" } = {}) {
   const now = Date.now();
-  const key = clientAddress(request);
+  const key = `${scope}:${clientAddress(request)}`;
   const current = rateBuckets.get(key);
-  const bucket = !current || now - current.startedAt >= 60_000 ? { startedAt: now, count: 0 } : current;
+  const bucket = !current || now - current.startedAt >= windowMs ? { startedAt: now, count: 0 } : current;
   bucket.count += 1;
   rateBuckets.set(key, bucket);
   if (rateBuckets.size > 2000) {
-    for (const [address, entry] of rateBuckets) if (now - entry.startedAt >= 120_000) rateBuckets.delete(address);
+    for (const [address, entry] of rateBuckets) if (now - entry.startedAt >= Math.max(120_000, windowMs * 2)) rateBuckets.delete(address);
   }
-  response.setHeader("x-ratelimit-limit", "120");
-  response.setHeader("x-ratelimit-remaining", String(Math.max(0, 120 - bucket.count)));
-  if (bucket.count <= 120) return false;
-  response.setHeader("retry-after", "60");
+  response.setHeader("x-ratelimit-limit", String(limit));
+  response.setHeader("x-ratelimit-remaining", String(Math.max(0, limit - bucket.count)));
+  if (bucket.count <= limit) return false;
+  response.setHeader("retry-after", String(Math.ceil(windowMs / 1000)));
   json(response, 429, { error: "请求过于频繁，请稍后再试" });
   return true;
 }
@@ -262,14 +324,17 @@ function marketStatus() {
 function assessEntry(analysis) {
   const { current, signal } = analysis;
   if (analysis.rows.length < 120) return { state: "neutral", label: "样本不足", priority: 1, detail: "历史净值少于120个净值日，暂不触发中长期入仓信号" };
+  if (current.structure?.state === "broken") return { state: "risk", label: "趋势破坏", priority: 5, detail: current.structure.advice };
+  if (current.structure?.state === "pullback") return { state: "watch", label: "短期回调", priority: 3, detail: current.structure.advice };
+  if (["repair", "mixed"].includes(current.structure?.state)) return { state: "watch", label: current.structure.label, priority: 2, detail: current.structure.advice };
   const confirmations = [
     current.trendNav > current.ma20,
     current.k > current.d,
     current.macdHist > 0,
     current.rsi >= 45 && current.rsi < 73
   ].filter(Boolean).length;
-  if (signal.score >= signal.threshold.attention && signal.confidence >= 70 && confirmations >= 3) {
-    return { state: "candidate", label: "可分批建仓", priority: 4, detail: `20-120日趋势达到阈值，${signal.confidence}%有效指标同向且至少三项核心指标确认` };
+  if (current.structure?.state === "trend" && signal.score >= signal.threshold.attention && signal.confidence >= 70 && confirmations >= 3) {
+    return { state: "candidate", label: "可分批建仓", priority: 4, detail: `上行结构已确认，长期状态、中期趋势和短期择时的一致性为 ${signal.confidence}%` };
   }
   if (signal.score >= signal.threshold.attention - 14 && signal.confidence >= 55 && confirmations >= 2) {
     return { state: "watch", label: "转强观察", priority: 3, detail: "中长期趋势正在改善，但还未达到建仓阈值" };
@@ -319,10 +384,13 @@ async function buildPortfolio(codes, profile) {
         current: analysis.current,
         signal: {
           score: analysis.signal.score,
+          rawScore: analysis.signal.rawScore,
           signal: analysis.signal.signal,
           tone: analysis.signal.tone,
           confidence: analysis.signal.confidence,
           agreement: analysis.signal.agreement,
+          conflict: analysis.signal.conflict,
+          model: analysis.signal.model,
           threshold: analysis.signal.threshold
         },
         entry,
@@ -379,17 +447,19 @@ async function buildOpportunityFundamental(holdings) {
 function assessMarketOpportunity(candidate) {
   const { analysis, dataQuality, ranking, research } = candidate;
   const technical = assessEntry(analysis);
+  const structure = analysis.current.structure;
   const fundamentalsUsable = research.fundamentalScore != null && research.coverage >= 15;
   const fundamentalsPass = fundamentalsUsable && research.fundamentalScore >= -10;
   const overextended = analysis.current.rsi >= 74
     || analysis.current.volatility >= 45
     || ranking.monthReturn >= 25;
   if (dataQuality !== "verified") return { state: "wait", label: "数据待确认", detail: "排行净值与正式历史净值尚未完成一致性校验，暂不用于建仓参考" };
-  if (technical.state === "risk") return { state: "sell", label: "暂不跟随", detail: "中长期趋势处于防守区，即使区间收益靠前也不作为建仓候选" };
-  if (technical.state === "candidate" && fundamentalsPass && !overextended) {
+  if (technical.state === "risk" || structure?.state === "broken") return { state: "sell", label: "暂不跟随", detail: "中长期结构已进入防守区，即使区间收益靠前也不作为建仓候选" };
+  if (structure?.state === "pullback") return { state: "wait", label: "回调确认", detail: "中长期骨架暂未破坏，但短期动量已经转弱；等待 MA20 止跌或动能转正后再评估建仓" };
+  if (technical.state === "candidate" && structure?.state === "trend" && fundamentalsPass && !overextended) {
     return { state: "base", label: "可研究建仓", detail: "趋势、动能、风险和持仓基本面均通过当前阈值；只适合作为分批研究候选，不建议追涨一次买入" };
   }
-  if (technical.state === "candidate" && overextended) return { state: "wait", label: "等待回撤", detail: "中期趋势较强，但RSI、波动或近1月涨幅显示追涨风险，等待回撤后重新验证" };
+  if (technical.state === "candidate" && structure?.state === "trend" && overextended) return { state: "wait", label: "等待回撤", detail: "中期趋势较强，但RSI、波动或近1月涨幅显示追涨风险，等待回撤后重新验证" };
   if (!fundamentalsUsable) return { state: "hold", label: "仅作强势对比", detail: "区间收益和技术趋势较强，但持仓财务覆盖不足，暂不生成建仓参考" };
   return { state: "hold", label: "继续跟踪", detail: "基金位于强势样本中，但有效指标同向率或基本面尚未达到建仓阈值" };
 }
@@ -473,7 +543,8 @@ async function buildMarketOpportunities(profile) {
       confidence: candidate.analysis.signal.confidence,
       drawdown: candidate.analysis.current.drawdown,
       volatility: candidate.analysis.current.volatility,
-      rsi: candidate.analysis.current.rsi
+      rsi: candidate.analysis.current.rsi,
+      structure: candidate.analysis.current.structure
     },
     fundamental: { score: candidate.research.fundamentalScore, coverage: candidate.research.coverage },
     dataQuality: candidate.dataQuality,
@@ -518,7 +589,7 @@ async function handleApi(request, response, url) {
     const requestedProfile = url.searchParams.get("profile");
     const profile = ["conservative", "balanced", "aggressive"].includes(requestedProfile) ? requestedProfile : "balanced";
     try {
-      const payload = await getResearchCached(`market-opportunities-v4-${profile}`, MARKET_OPPORTUNITY_TTL, () => buildMarketOpportunities(profile));
+      const payload = await getResearchCached(`market-opportunities-v9-${profile}`, MARKET_OPPORTUNITY_TTL, () => buildMarketOpportunities(profile));
       return json(response, 200, payload);
     } catch (error) { return json(response, 502, { error: error.message }); }
   }
@@ -583,6 +654,20 @@ const server = http.createServer(async (request, response) => {
   try {
     applySecurityHeaders(response);
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname.startsWith("/api/auth/")) {
+      const authLimit = url.pathname === "/api/auth/login"
+        ? { limit: 10, windowMs: 15 * 60_000, scope: "auth-login" }
+        : { limit: 120, windowMs: 60_000, scope: "auth" };
+      if (rateLimit(request, response, authLimit)) return;
+      return await handleAuth(request, response, url);
+    }
+    if (authEnabled && !validSession(request)) {
+      if (url.pathname.startsWith("/api/")) return json(response, 401, { error: "请先输入访问密码" });
+      if (["/access.css", "/access.js", "/icon.svg"].includes(url.pathname)) return await serveStatic(response, url.pathname);
+      if (["GET", "HEAD"].includes(request.method)) return await serveStatic(response, "/access.html");
+      response.writeHead(405, { "content-type": "text/plain; charset=utf-8", allow: "GET, HEAD, POST" });
+      return response.end("Method not allowed");
+    }
     if (url.pathname.startsWith("/api/")) {
       if (url.pathname !== "/api/health" && rateLimit(request, response)) return;
       return await handleApi(request, response, url);

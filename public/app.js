@@ -11,6 +11,13 @@ function readStoredObject(key) {
   try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; }
 }
 
+function readStoredArray(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch { return []; }
+}
+
 function readStrategySettings() {
   const stored = readStoredObject("fund-strategy-settings");
   return {
@@ -45,6 +52,18 @@ const mergedWatchlist = [...initialPortfolio, ...readStoredList()]
   .filter((fund, index, items) => items.findIndex((item) => item.code === fund.code) === index)
   .map(({ code, name, userGroup = "未分组" }) => ({ code, name, userGroup }));
 
+const NAV_SERIES_GROUPS = {
+  core: ["trendNav", "ma20"],
+  short: ["trendNav", "ma5", "ma10", "ma20"],
+  long: ["trendNav", "ma20", "ma60", "ma120"],
+  all: ["trendNav", "ma5", "ma10", "ma20", "ma60", "ma120"]
+};
+const storedChartMode = localStorage.getItem("fund-chart-mode");
+const initialChartMode = NAV_SERIES_GROUPS[storedChartMode]
+  ? storedChartMode
+  : window.matchMedia("(max-width: 760px)").matches ? "core" : "all";
+const storedIndicatorTab = localStorage.getItem("fund-indicator-tab");
+
 const state = {
   code: localStorage.getItem("fund-code") || "110022",
   profile: localStorage.getItem("fund-profile") || "balanced",
@@ -55,6 +74,8 @@ const state = {
   portfolioPayload: null,
   portfolioResearchPayload: null,
   marketOpportunityPayload: null,
+  marketTracking: readStoredArray("fund-market-tracking-v1"),
+  marketAlerts: readStoredArray("fund-market-alerts-v1"),
   refreshingMarketOpportunities: false,
   portfolioFilter: "all",
   portfolioGroup: "all",
@@ -67,6 +88,9 @@ const state = {
   payload: null,
   charts: [],
   navChart: null,
+  chartMode: initialChartMode,
+  indicatorTab: ["kdj", "macd", "rsi"].includes(storedIndicatorTab) ? storedIndicatorTab : "kdj",
+  chartFocus: false,
   searchTimer: null,
   activeCompanyCode: null,
   strategyFundCode: null,
@@ -120,7 +144,15 @@ function showView(view) {
   $("#portfolioView").hidden = view !== "portfolio";
   $("#detailView").hidden = view !== "detail";
   $$(".view-switch button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  if (view === "detail") requestAnimationFrame(() => state.charts.forEach((chart) => chart.render()));
+  if (view === "detail") {
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    requestAnimationFrame(() => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      state.charts.forEach((chart) => chart.render());
+    });
+  }
 }
 
 function updateCurrentFundButton() {
@@ -275,6 +307,7 @@ function compositeFor(item) {
     fundamentalUsable: usable,
     drawdown: item.current?.drawdown,
     volatility: item.current?.volatility,
+    structureState: item.current?.structure?.state,
     holdingReturnPct: holding?.returnPct,
     hasHolding: Boolean(holding),
     targetPct,
@@ -345,8 +378,8 @@ function renderPortfolioRows() {
       <td><div class="fund-cell"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${item.code} · ${tagLabel}</span><select class="inline-group-select" data-group-code="${item.code}" aria-label="${escapeHtml(item.name)}关注分组">${groupOptions}</select></div></td>
       <td><div class="holding-cell"><strong>${formatNumber(item.current.nav)}</strong><span>${item.current.date} · ${quality.label}</span><small class="${signedClass(item.current.dailyChange)}">${formatPct(item.current.dailyChange)}</small></div></td>
       <td><div class="holding-cell"><strong class="${signedClass(holding?.returnPct)}">${formatPct(holding?.returnPct)}</strong><span>${holding?.currentValue != null ? formatMoney(holding.currentValue) : "未设置持仓成本"}</span><small>止盈目标 ${derived.targetPct.toFixed(1)}%</small></div></td>
-      <td><div class="composite-cell"><span class="score-chip ${scoreClass}" title="综合趋势等级，范围 -10.0 至 +10.0">${formatTrendLevel(derived.compositeScore)}</span><small>技术 ${formatTrendLevel(item.signal.score)}${derived.usable ? ` · 基本面 ${derived.research.fundamentalScore > 0 ? "+" : ""}${derived.research.fundamentalScore}` : ""}</small></div></td>
-      <td><div class="action-cell"><span class="entry-chip ${derived.entry.state}" title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(derived.entry.label)}</span><small title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(derived.entry.detail || "")}</small></div></td>
+      <td><div class="composite-cell"><span class="score-chip ${scoreClass}" title="结构校准后的综合分，范围 -10.0 至 +10.0">${formatTrendLevel(derived.compositeScore)}</span><small>模型 ${formatTrendLevel(item.signal.score)}${derived.usable ? ` · 基本面 ${derived.research.fundamentalScore > 0 ? "+" : ""}${derived.research.fundamentalScore}` : ""}</small></div></td>
+      <td><div class="action-cell"><span class="action-chip-row"><span class="entry-chip ${derived.entry.state}" title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(derived.entry.label)}</span><span class="structure-chip ${item.current?.structure?.state || "mixed"}" title="${escapeHtml(item.current?.structure?.detail || "等待均线结构确认")}">${escapeHtml(item.current?.structure?.label || "结构待确认")}</span></span><small title="${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}">${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}</small></div></td>
       <td><button class="icon-button small row-action" data-open-code="${item.code}" title="查看单基分析" aria-label="查看${escapeHtml(item.name)}分析"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></td>
     </tr>`;
   }).join("");
@@ -394,7 +427,7 @@ function renderTrendLeaders(items) {
     return `<button class="trend-leader-card" data-leader-code="${item.code}">
       <span class="leader-rank">${String(index + 1).padStart(2, "0")}</span>
       <span class="leader-identity"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${item.code} · ${verified ? "正式净值已校验" : "数据待确认"}</small></span>
-      <span class="leader-score ${signedClass(derived.compositeScore)}"><strong>${formatTrendLevel(derived.compositeScore)}</strong><small>趋势等级</small></span>
+      <span class="leader-score ${signedClass(derived.compositeScore)}"><strong>${formatTrendLevel(derived.compositeScore)}</strong><small>结构校准分</small></span>
       <span class="leader-return-pair"><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.month)}">${formatPct(item.current?.periodReturns?.month)}</strong><small>近1月</small></span><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.quarter)}">${formatPct(item.current?.periodReturns?.quarter)}</strong><small>近3月</small></span></span>
       <span class="entry-chip ${derived.entry.state}">${escapeHtml(derived.entry.label)}</span>
     </button>`;
@@ -402,21 +435,160 @@ function renderTrendLeaders(items) {
   $$('[data-leader-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.leaderCode)));
 }
 
+const MARKET_SUGGESTION_RISK = { base: 0, hold: 1, wait: 2, sell: 3 };
+const MARKET_STRUCTURE_RISK = { trend: 0, pullback: 1, repair: 1, mixed: 2, broken: 3 };
+
+function marketSnapshot(item, payload) {
+  const structure = item.trend?.structure ?? { state: "mixed", label: "结构待确认", severity: "watch", advice: "进入单基详情重新核验趋势结构。" };
+  return {
+    sector: item.sector,
+    code: item.code,
+    name: item.name,
+    score: Number(item.trend?.score),
+    confidence: Number(item.trend?.confidence),
+    drawdown: Number(item.trend?.drawdown),
+    suggestionState: item.suggestion?.state ?? "wait",
+    suggestionLabel: item.suggestion?.label ?? "等待确认",
+    structureState: structure.state,
+    structureLabel: structure.label,
+    structureAdvice: structure.advice,
+    rankDate: payload.rankDate,
+    generatedAt: payload.generatedAt
+  };
+}
+
+function saveMarketRiskState() {
+  localStorage.setItem("fund-market-tracking-v1", JSON.stringify(state.marketTracking));
+  localStorage.setItem("fund-market-alerts-v1", JSON.stringify(state.marketAlerts.slice(0, 40)));
+}
+
+function marketAlert({ type, severity = "watch", sector, code, title, detail, advice, signature }) {
+  const id = `${type}:${sector}:${code || "sector"}:${signature}`;
+  if (state.marketAlerts.some((alert) => alert.id === id)) return null;
+  return { id, type, severity, sector, code, title, detail, advice, createdAt: new Date().toISOString(), dismissed: false };
+}
+
+function notifyMarketRiskAlerts(alerts) {
+  if (!alerts.length || !("Notification" in window) || localStorage.getItem("fund-notifications") !== "on" || Notification.permission !== "granted") return;
+  new Notification("净值罗盘：候选风险预警", {
+    body: alerts.slice(0, 3).map((alert) => `${alert.sector}：${alert.title}`).join("；"),
+    tag: "fund-market-risk"
+  });
+}
+
+function updateMarketRiskTracking(payload) {
+  const current = (payload.items ?? []).map((item) => marketSnapshot(item, payload));
+  const previous = state.marketTracking;
+  const newAlerts = [];
+  if (previous.length) {
+    const previousBySector = new Map(previous.map((item) => [item.sector, item]));
+    const currentBySector = new Map(current.map((item) => [item.sector, item]));
+    for (const next of current) {
+      const prior = previousBySector.get(next.sector);
+      if (!prior) continue;
+      if (prior.code !== next.code) {
+        const alert = marketAlert({
+          type: "representative-change",
+          sector: next.sector,
+          code: next.code,
+          title: "板块代表已更换",
+          detail: `${prior.name}（${prior.code}）已由 ${next.name}（${next.code}）替代；相对优势发生变化，不应继续沿用旧候选结论。`,
+          advice: "分别进入两只基金的单基详情，核对旧代表是否趋势破坏，以及新代表是否存在追涨或数据滞后风险。",
+          signature: `${prior.code}-${next.code}-${next.rankDate || "latest"}`
+        });
+        if (alert) newAlerts.push(alert);
+        continue;
+      }
+
+      const reasons = [];
+      const previousStructureRisk = MARKET_STRUCTURE_RISK[prior.structureState] ?? 2;
+      const currentStructureRisk = MARKET_STRUCTURE_RISK[next.structureState] ?? 2;
+      if (currentStructureRisk > previousStructureRisk) reasons.push(`结构由“${prior.structureLabel}”转为“${next.structureLabel}”`);
+      if ((MARKET_SUGGESTION_RISK[next.suggestionState] ?? 2) > (MARKET_SUGGESTION_RISK[prior.suggestionState] ?? 2)) reasons.push(`建议由“${prior.suggestionLabel}”降为“${next.suggestionLabel}”`);
+      if (Number.isFinite(prior.score) && Number.isFinite(next.score) && prior.score - next.score >= 20) reasons.push(`结构校准分下降 ${((prior.score - next.score) / 10).toFixed(1)}`);
+      if (Number.isFinite(prior.confidence) && Number.isFinite(next.confidence) && prior.confidence - next.confidence >= 15) reasons.push(`证据组一致性下降 ${Math.round(prior.confidence - next.confidence)} 个百分点`);
+      if (Number.isFinite(prior.drawdown) && Number.isFinite(next.drawdown) && next.drawdown <= prior.drawdown - 5) reasons.push(`回撤扩大 ${Math.abs(next.drawdown - prior.drawdown).toFixed(1)} 个百分点`);
+      if (reasons.length) {
+        const high = next.structureState === "broken" || next.suggestionState === "sell";
+        const alert = marketAlert({
+          type: "deterioration",
+          severity: high ? "high" : "watch",
+          sector: next.sector,
+          code: next.code,
+          title: high ? "候选进入高风险状态" : "候选优势正在减弱",
+          detail: `${next.name}：${reasons.join("；")}。`,
+          advice: next.structureAdvice || "暂停沿用原推荐结论，进入单基详情重新核验。",
+          signature: `${next.rankDate || "latest"}-${next.structureState}-${next.suggestionState}-${Math.round(next.score / 10)}`
+        });
+        if (alert) newAlerts.push(alert);
+      }
+    }
+
+    for (const prior of previous) {
+      if (currentBySector.has(prior.sector)) continue;
+      const alert = marketAlert({
+        type: "removed",
+        sector: prior.sector,
+        code: prior.code,
+        title: "板块代表退出当前前三",
+        detail: `${prior.name}（${prior.code}）不再出现在本轮板块代表中，说明相对排名或综合验证优势下降。`,
+        advice: "退出前三不自动等于卖出；请进入单基详情，根据“短期回调”或“趋势破坏”状态决定继续观察还是降低风险。",
+        signature: `${prior.code}-${payload.rankDate || "latest"}`
+      });
+      if (alert) newAlerts.push(alert);
+    }
+  }
+
+  state.marketTracking = current;
+  if (newAlerts.length) state.marketAlerts = [...newAlerts, ...state.marketAlerts].slice(0, 40);
+  saveMarketRiskState();
+  notifyMarketRiskAlerts(newAlerts);
+  return newAlerts;
+}
+
+function renderMarketRiskAlerts() {
+  const active = state.marketAlerts.filter((alert) => !alert.dismissed);
+  const highCount = active.filter((alert) => alert.severity === "high").length;
+  setText("#marketRiskStatus", active.length ? `${active.length} 项待处理${highCount ? ` · ${highCount} 项高风险` : ""}` : "当前未发现候选失效预警");
+  setText("#marketRiskCopy", `已记录 ${state.marketTracking.length} 个本轮候选；仅在网页或 PWA 打开时按正式净值节奏检查`);
+  const container = $("#marketRiskAlerts");
+  container.hidden = !active.length;
+  container.innerHTML = active.slice(0, 3).map((alert) => `<div class="market-risk-alert ${alert.severity}">
+    <span class="risk-level">${alert.severity === "high" ? "高风险" : "需关注"}</span>
+    <div><strong>${escapeHtml(alert.sector)} · ${escapeHtml(alert.title)}</strong><p>${escapeHtml(alert.detail)}</p><small>建议：${escapeHtml(alert.advice)}</small></div>
+    <span class="market-risk-actions">${alert.code ? `<button class="risk-open-button" data-risk-code="${escapeHtml(alert.code)}">查看详情</button>` : ""}<button class="icon-button small" data-dismiss-market-alert="${escapeHtml(alert.id)}" title="确认并隐藏该预警" aria-label="确认并隐藏该预警"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button></span>
+  </div>`).join("");
+  $$('[data-risk-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.riskCode)));
+  $$('[data-dismiss-market-alert]').forEach((button) => button.addEventListener("click", () => {
+    const alert = state.marketAlerts.find((item) => item.id === button.dataset.dismissMarketAlert);
+    if (!alert) return;
+    alert.dismissed = true;
+    saveMarketRiskState();
+    renderMarketRiskAlerts();
+  }));
+}
+
 function renderMarketOpportunities(payload) {
   state.marketOpportunityPayload = payload;
+  updateMarketRiskTracking(payload);
+  renderMarketRiskAlerts();
   const container = $("#marketOpportunities");
   const items = payload.items ?? [];
   if (!items.length) {
     container.innerHTML = '<div class="market-opportunities-empty">当前没有同时通过板块去重与数据验证的候选</div>';
   } else {
-    container.innerHTML = items.map((item, index) => `<button class="market-opportunity" data-market-code="${item.code}">
-      <span class="market-opportunity-top"><b>${escapeHtml(item.sector)}</b><small>板块代表 ${String(index + 1).padStart(2, "0")}</small></span>
+    container.innerHTML = items.map((item, index) => {
+      const structure = item.trend?.structure ?? { state: "mixed", label: "结构待确认", detail: "等待均线结构确认" };
+      return `<button class="market-opportunity" data-market-code="${item.code}">
+      <span class="market-opportunity-top"><b>${escapeHtml(item.sector)}</b><small>板块代表 ${String(index + 1).padStart(2, "0")} · 自动监测</small></span>
       <span class="market-opportunity-name"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${item.code} · 持仓期 ${escapeHtml(item.holdingsReportDate || "待披露")}</small></span>
       <span class="market-return"><small>近1月</small><strong class="${signedClass(item.returns.month)}">${formatPct(item.returns.month)}</strong></span>
       <span class="market-return"><small>近3月</small><strong class="${signedClass(item.returns.quarter)}">${formatPct(item.returns.quarter)}</strong></span>
-      <span class="market-evidence"><span>趋势等级 <b class="${signedClass(item.trend.score)}">${formatTrendLevel(item.trend.score)}</b></span><span>同向率 <b>${item.trend.confidence}%</b></span><span>回撤 <b class="${signedClass(item.trend.drawdown)}">${formatPct(item.trend.drawdown)}</b></span><span>基本面 <b>${item.fundamental.score == null ? "待补" : `${item.fundamental.score > 0 ? "+" : ""}${item.fundamental.score}`}</b></span></span>
+      <span class="market-evidence"><span>校准分 <b class="${signedClass(item.trend.score)}">${formatTrendLevel(item.trend.score)}</b></span><span>一致性 <b>${item.trend.confidence}%</b></span><span>回撤 <b class="${signedClass(item.trend.drawdown)}">${formatPct(item.trend.drawdown)}</b></span><span>基本面 <b>${item.fundamental.score == null ? "待补" : `${item.fundamental.score > 0 ? "+" : ""}${item.fundamental.score}`}</b></span></span>
+      <span class="market-structure"><span class="structure-chip ${structure.state}">${escapeHtml(structure.label)}</span><small title="${escapeHtml(structure.detail)}">${escapeHtml(structure.detail)}</small></span>
       <span class="market-decision"><span class="entry-chip ${item.suggestion.state}">${escapeHtml(item.suggestion.label)}</span><small title="${escapeHtml(item.suggestion.detail)}">${escapeHtml(item.suggestion.detail)}</small></span>
-    </button>`).join("");
+    </button>`;
+    }).join("");
     $$('[data-market-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.marketCode)));
   }
   const updated = new Date(payload.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -538,7 +710,11 @@ function updateRefreshCountdown() {
   const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
   const remainder = String(seconds % 60).padStart(2, "0");
   setText("#refreshCountdown", hours ? `${String(hours).padStart(2, "0")}:${minutes}:${remainder}` : `${minutes}:${remainder}`);
-  if (seconds === 0) refreshPortfolio({ silent: true });
+  if (seconds === 0) {
+    state.nextRefreshAt = Date.now() + 60 * 1000;
+    refreshPortfolio({ silent: true });
+    refreshMarketOpportunities();
+  }
 }
 
 function localDateString(date = new Date()) {
@@ -582,6 +758,7 @@ class LineChart {
     this.rows = [];
     this.markers = [];
     this.hoverIndex = null;
+    this.activeSeriesKeys = null;
     this.resizeObserver = new ResizeObserver(() => this.render());
     this.resizeObserver.observe(canvas.parentElement);
     canvas.addEventListener("mousemove", (event) => this.onPointer(event));
@@ -603,6 +780,22 @@ class LineChart {
   setMarkers(markers) {
     this.markers = Array.isArray(markers) ? markers : [];
     this.render();
+  }
+
+  setVisibleSeries(keys) {
+    this.activeSeriesKeys = new Set(keys);
+    this.hoverIndex = null;
+    this.tooltip.classList.remove("visible");
+    this.render();
+  }
+
+  getVisibleSeriesKeys() {
+    return this.visibleSeries().map((series) => series.key);
+  }
+
+  visibleSeries() {
+    if (!this.activeSeriesKeys) return this.options.series;
+    return this.options.series.filter((series) => this.activeSeriesKeys.has(series.key));
   }
 
   markerIndex(marker) {
@@ -634,15 +827,23 @@ class LineChart {
   }
 
   bounds(width, height) {
-    return { left: 10, top: 10, right: width - 52, bottom: height - 25 };
+    const compact = width < 480;
+    return { left: compact ? 6 : 10, top: 10, right: width - (compact ? 42 : 52), bottom: height - (compact ? 22 : 25) };
+  }
+
+  seriesValue(row, series) {
+    const raw = row?.[series.key];
+    if (raw == null || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
   }
 
   getValues() {
     const values = [];
-    for (const series of this.options.series) {
+    for (const series of this.visibleSeries()) {
       for (const row of this.rows) {
-        const value = Number(row[series.key]);
-        if (Number.isFinite(value)) values.push(value);
+        const value = this.seriesValue(row, series);
+        if (value != null) values.push(value);
       }
     }
     return values;
@@ -671,20 +872,21 @@ class LineChart {
     const yFor = (value) => bounds.bottom - (value - min) / Math.max(.000001, max - min) * (bounds.bottom - bounds.top);
 
     ctx.lineWidth = 1;
-    ctx.font = '10px "Segoe UI", sans-serif';
+    ctx.font = `${width < 480 ? 9 : 10}px "Segoe UI", sans-serif`;
     ctx.textAlign = "left";
     ctx.fillStyle = css("--muted");
     ctx.strokeStyle = css("--line");
-    for (let i = 0; i <= 4; i += 1) {
-      const y = bounds.top + i / 4 * (bounds.bottom - bounds.top);
+    const gridCount = width < 480 ? 3 : 4;
+    for (let i = 0; i <= gridCount; i += 1) {
+      const y = bounds.top + i / gridCount * (bounds.bottom - bounds.top);
       ctx.beginPath();
       ctx.moveTo(bounds.left, y);
       ctx.lineTo(bounds.right, y);
       ctx.stroke();
-      const value = max - i / 4 * (max - min);
+      const value = max - i / gridCount * (max - min);
       ctx.fillText(this.options.axisFormat ? this.options.axisFormat(value) : value.toFixed(2), bounds.right + 7, y + 3);
     }
-    const tickCount = width < 520 ? 3 : 5;
+    const tickCount = width < 380 ? 2 : width < 520 ? 3 : 5;
     ctx.textAlign = "center";
     for (let i = 0; i < tickCount; i += 1) {
       const index = Math.round(i / Math.max(1, tickCount - 1) * (this.rows.length - 1));
@@ -701,13 +903,14 @@ class LineChart {
       ctx.restore();
     }
 
-    const barSeries = this.options.series.filter((series) => series.type === "bar");
+    const visibleSeries = this.visibleSeries();
+    const barSeries = visibleSeries.filter((series) => series.type === "bar");
     for (const series of barSeries) {
       const zeroY = yFor(0);
       const barWidth = Math.max(1, (bounds.right - bounds.left) / Math.max(1, this.rows.length) * .7);
       this.rows.forEach((row, index) => {
-        const value = Number(row[series.key]);
-        if (!Number.isFinite(value)) return;
+        const value = this.seriesValue(row, series);
+        if (value == null) return;
         ctx.fillStyle = value >= 0 ? css("--up") : css("--down");
         const y = yFor(value);
         ctx.globalAlpha = .62;
@@ -716,19 +919,25 @@ class LineChart {
       ctx.globalAlpha = 1;
     }
 
-    for (const series of this.options.series.filter((item) => item.type !== "bar")) {
+    for (const series of visibleSeries.filter((item) => item.type !== "bar")) {
+      ctx.save();
       ctx.strokeStyle = series.color.startsWith("--") ? css(series.color) : series.color;
       ctx.lineWidth = series.width || 1.6;
+      ctx.globalAlpha = series.opacity ?? 1;
+      ctx.setLineDash(series.dash || []);
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.beginPath();
       let started = false;
       this.rows.forEach((row, index) => {
-        const value = Number(row[series.key]);
-        if (!Number.isFinite(value)) { started = false; return; }
+        const value = this.seriesValue(row, series);
+        if (value == null) { started = false; return; }
         const x = xFor(index);
         const y = yFor(value);
         if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
       });
       ctx.stroke();
+      ctx.restore();
     }
 
     for (const marker of this.markers) {
@@ -761,9 +970,9 @@ class LineChart {
       const x = xFor(this.hoverIndex);
       ctx.strokeStyle = css("--line-strong");
       ctx.beginPath(); ctx.moveTo(x, bounds.top); ctx.lineTo(x, bounds.bottom); ctx.stroke();
-      for (const series of this.options.series.filter((item) => item.type !== "bar")) {
-        const value = Number(this.rows[this.hoverIndex][series.key]);
-        if (!Number.isFinite(value)) continue;
+      for (const series of visibleSeries.filter((item) => item.type !== "bar")) {
+        const value = this.seriesValue(this.rows[this.hoverIndex], series);
+        if (value == null) continue;
         ctx.beginPath();
         ctx.fillStyle = series.color.startsWith("--") ? css(series.color) : series.color;
         ctx.arc(x, yFor(value), 3, 0, Math.PI * 2);
@@ -780,13 +989,13 @@ class LineChart {
     const index = Math.round((localX - bounds.left) / Math.max(1, bounds.right - bounds.left) * (this.rows.length - 1));
     this.hoverIndex = index;
     const row = this.rows[index];
-    const lines = this.options.series.map((series) => {
-      const value = Number(row[series.key]);
-      return Number.isFinite(value) ? `${series.label} ${series.format ? series.format(value) : value.toFixed(2)}` : null;
+    const lines = this.visibleSeries().map((series) => {
+      const value = this.seriesValue(row, series);
+      return value != null ? `${series.label} ${series.format ? series.format(value) : value.toFixed(2)}` : null;
     }).filter(Boolean);
     const markerLines = this.markers.filter((marker) => this.markerIndex(marker) === index).map((marker) => `${marker.type === "buy" ? "买入" : "卖出"} ${formatMoney(marker.amount)} · ${Number(marker.units).toFixed(2)}份`);
     this.tooltip.innerHTML = `<strong>${row.date}</strong><br>${[...lines, ...markerLines].join("<br>")}`;
-    this.tooltip.style.left = `${localX}px`;
+    this.tooltip.style.left = `${clamp(localX, 72, Math.max(72, rect.width - 72))}px`;
     this.tooltip.style.top = `${Math.max(54, event.clientY - rect.top)}px`;
     this.tooltip.classList.add("visible");
     this.render();
@@ -795,38 +1004,108 @@ class LineChart {
 
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)); }
 
+function syncNavChartControls() {
+  const visible = new Set(state.navChart?.getVisibleSeriesKeys() || []);
+  $$("#navSeriesControl button").forEach((button) => button.classList.toggle("active", button.dataset.chartMode === state.chartMode));
+  $$("#mainLegend [data-series]").forEach((button) => {
+    const pressed = visible.has(button.dataset.series);
+    button.setAttribute("aria-pressed", String(pressed));
+  });
+}
+
+function setNavChartMode(mode, persist = true) {
+  if (!NAV_SERIES_GROUPS[mode] || !state.navChart) return;
+  state.chartMode = mode;
+  state.navChart.setVisibleSeries(NAV_SERIES_GROUPS[mode]);
+  if (persist) localStorage.setItem("fund-chart-mode", mode);
+  syncNavChartControls();
+}
+
+function toggleNavSeries(key) {
+  if (!state.navChart) return;
+  const visible = new Set(state.navChart.getVisibleSeriesKeys());
+  if (visible.has(key)) {
+    if (visible.size === 1) return showToast("净值图至少保留一条线");
+    visible.delete(key);
+  } else visible.add(key);
+  state.chartMode = "custom";
+  state.navChart.setVisibleSeries([...visible]);
+  syncNavChartControls();
+}
+
+function setIndicatorTab(indicator, persist = true) {
+  if (!["kdj", "macd", "rsi"].includes(indicator)) return;
+  state.indicatorTab = indicator;
+  if (persist) localStorage.setItem("fund-indicator-tab", indicator);
+  $$("#indicatorTabs button").forEach((button) => button.classList.toggle("active", button.dataset.indicator === indicator));
+  $$("[data-indicator-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.indicatorPanel === indicator));
+  requestAnimationFrame(() => state.charts.forEach((chart) => chart.render()));
+}
+
+function syncChartFocus(active) {
+  state.chartFocus = active;
+  const workspace = $("#chartWorkspace");
+  const button = $("#chartFocusButton");
+  workspace.classList.toggle("chart-focus-mode", active);
+  document.body.classList.toggle("chart-focus-open", active);
+  $("#chartRotateHint").hidden = !active;
+  button.classList.toggle("active", active);
+  button.title = active ? "退出全屏图表" : "全屏横屏查看";
+  button.setAttribute("aria-label", button.title);
+  button.innerHTML = active
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9H4V4m11 5h5V4M9 15H4v5m11-5h5v5"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5m13 5h5v-5"/></svg>';
+  requestAnimationFrame(() => state.charts.forEach((chart) => chart.render()));
+}
+
+async function toggleChartFocus() {
+  if (state.chartFocus) {
+    syncChartFocus(false);
+    screen.orientation?.unlock?.();
+    return;
+  }
+  syncChartFocus(true);
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch {
+    showToast("已展开图表；旋转手机可获得更宽视图");
+  }
+}
+
 function initCharts() {
   state.navChart = new LineChart($("#navChart"), $("#navTooltip"), {
       series: [
-        { key: "trendNav", label: "累计净值", color: "--teal", width: 2.1, format: (value) => value.toFixed(4) },
-        { key: "ma5", label: "MA5", color: "--up", width: 1.1, format: (value) => value.toFixed(4) },
-        { key: "ma10", label: "MA10", color: "--amber", width: 1.1, format: (value) => value.toFixed(4) },
-        { key: "ma20", label: "MA20", color: "--purple", width: 1.25, format: (value) => value.toFixed(4) },
-        { key: "ma60", label: "MA60", color: "--blue", width: 1.25, format: (value) => value.toFixed(4) },
-        { key: "ma120", label: "MA120", color: "--muted", width: 1.15, format: (value) => value.toFixed(4) }
+        { key: "trendNav", label: "累计净值", color: "--chart-nav", width: 2.6, format: (value) => value.toFixed(4) },
+        { key: "ma5", label: "MA5", color: "--chart-ma5", width: 1.45, format: (value) => value.toFixed(4) },
+        { key: "ma10", label: "MA10", color: "--chart-ma10", width: 1.45, format: (value) => value.toFixed(4) },
+        { key: "ma20", label: "MA20", color: "--chart-ma20", width: 1.75, format: (value) => value.toFixed(4) },
+        { key: "ma60", label: "MA60", color: "--chart-ma60", width: 1.65, dash: [7, 4], format: (value) => value.toFixed(4) },
+        { key: "ma120", label: "MA120", color: "--chart-ma120", width: 1.55, dash: [2, 4], format: (value) => value.toFixed(4) }
       ], axisFormat: (value) => value.toFixed(3)
     });
   state.charts = [
     state.navChart,
     new LineChart($("#kdjChart"), $("#kdjTooltip"), {
       series: [
-        { key: "k", label: "K", color: "--teal", format: (value) => value.toFixed(1) },
-        { key: "d", label: "D", color: "--amber", format: (value) => value.toFixed(1) },
-        { key: "j", label: "J", color: "--purple", width: 1.1, format: (value) => value.toFixed(1) }
+        { key: "k", label: "K", color: "--chart-k", width: 1.8, format: (value) => value.toFixed(1) },
+        { key: "d", label: "D", color: "--chart-d", width: 1.7, format: (value) => value.toFixed(1) },
+        { key: "j", label: "J", color: "--chart-j", width: 1.5, dash: [5, 3], format: (value) => value.toFixed(1) }
       ], referenceLines: [{ value: 20 }, { value: 80 }], axisFormat: (value) => value.toFixed(0)
     }),
     new LineChart($("#macdChart"), $("#macdTooltip"), {
       series: [
         { key: "macdHist", label: "柱", type: "bar", color: "--up", format: (value) => value.toFixed(4) },
-        { key: "dif", label: "DIF", color: "--teal", format: (value) => value.toFixed(4) },
-        { key: "dea", label: "DEA", color: "--amber", format: (value) => value.toFixed(4) }
+        { key: "dif", label: "DIF", color: "--chart-k", width: 1.8, format: (value) => value.toFixed(4) },
+        { key: "dea", label: "DEA", color: "--chart-d", width: 1.7, dash: [5, 3], format: (value) => value.toFixed(4) }
       ], referenceLines: [{ value: 0 }], axisFormat: (value) => value.toFixed(3)
     }),
     new LineChart($("#rsiChart"), $("#rsiTooltip"), {
-      series: [{ key: "rsi", label: "RSI", color: "--teal", width: 1.8, format: (value) => value.toFixed(1) }],
+      series: [{ key: "rsi", label: "RSI", color: "--chart-rsi", width: 2, format: (value) => value.toFixed(1) }],
       min: 0, max: 100, referenceLines: [{ value: 30 }, { value: 70 }], axisFormat: (value) => value.toFixed(0)
     })
   ];
+  setNavChartMode(state.chartMode, false);
+  setIndicatorTab(state.indicatorTab, false);
 }
 
 function renderWatchlist() {
@@ -847,34 +1126,63 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 }
 
-function detailActionForSignal(signal) {
+function detailActionForSignal(signal, structure) {
   const portfolioItem = state.portfolioPayload?.items?.find((item) => item.code === state.code && !item.error);
   if (portfolioItem) return compositeFor(portfolioItem).entry;
+  if (structure?.state === "broken") return { state: "sell", label: "风险退出", detail: "中长期结构已被破坏，停止新增仓位，并结合赎回费用与持有期限分批降低风险" };
+  if (structure?.state === "pullback") return { state: "hold", label: "回调观察", detail: "中长期骨架尚未破坏，暂不因单日下跌退出；等待 MA20 止跌、动能转正或 MA60 失守后的新证据" };
+  if (structure?.state === "repair") return { state: "wait", label: "修复观察", detail: `修复动力${structure.repairPower?.label ?? "待确认"}，但中期反转尚未确认；等待 MA20 拐头并重新站回 MA60 后再研究分批建仓` };
   if (signal.score <= signal.threshold.reduce) return { state: "sell", label: "风险退出", detail: "中长期趋势已达到防守阈值，执行前核对赎回费用、持有期限和组合替代方案" };
-  if (signal.score >= signal.threshold.attention && signal.confidence >= 70) return { state: "base", label: "技术面通过", detail: "趋势等级达到阈值且有效指标同向率不低于70%；加入组合并完成正式净值与基本面校验后，才会生成分批建仓建议" };
-  return { state: "wait", label: "等待确认", detail: "当前有效指标同向率不足以新增仓位，继续等待中长期趋势确认" };
+  if (signal.score >= signal.threshold.attention && signal.confidence >= 70) return { state: "base", label: "模型验证通过", detail: "结构校准分达到阈值且独立证据组一致性不低于70%；加入组合并完成正式净值与基本面校验后，才会生成分批建仓建议" };
+  return { state: "wait", label: "等待确认", detail: "当前独立证据组尚未形成足够一致性，继续等待中长期趋势确认" };
 }
 
-function renderSignal(signal, analogs) {
-  const action = detailActionForSignal(signal);
+function renderTrendStructure(structure) {
+  const current = structure ?? {
+    state: "mixed",
+    label: "结构待确认",
+    detail: "当前数据不足以区分短期回调与趋势破坏。",
+    advice: "等待净值与中长期均线形成一致证据。",
+    evidence: [],
+    repairPower: { score: 0, label: "尚未形成", cautions: [] }
+  };
+  $("#trendStructureBand").dataset.structure = current.state;
+  setText("#trendStructureLabel", current.label);
+  setText("#trendStructureDetail", current.detail);
+  setText("#trendStructureEvidence", current.evidence?.length ? `判断证据：${current.evidence.join(" · ")}` : "判断证据尚未形成一致");
+  setText("#trendStructureAdvice", current.advice);
+  setText("#repairPowerValue", `${current.repairPower?.score ?? 0}/100`);
+  setText("#repairPowerLabel", current.repairPower?.label ?? "尚未形成");
+  setText("#repairPowerWarning", current.repairPower?.cautions?.length ? current.repairPower.cautions.join(" · ") : "仅衡量修复证据，不代表上涨概率");
+}
+
+function renderSignal(signal, analogs, structure) {
+  const action = detailActionForSignal(signal, structure);
   setText("#trendScore", formatTrendLevel(signal.score));
   setText("#signalTitle", action.label);
-  setText("#signalAction", `${action.detail}。技术结论：${signal.signal}。`);
+  setText("#signalAction", `${action.detail}。统一模型结论：${signal.signal}。${signal.conflict ? ` 冲突处理：${signal.conflict}` : ""}`);
   $("#signalBand").dataset.action = action.state;
   setText("#confidenceValue", `${signal.confidence}%`);
   $("#confidenceBar").style.width = `${signal.confidence}%`;
   $("#confidenceBar").style.background = signal.confidence >= 70 ? css("--up") : signal.confidence >= 55 ? css("--amber") : css("--muted");
-  const agreementCount = signal.agreement?.total ? `${signal.agreement.aligned}/${signal.agreement.total}项有效指标` : "有效指标";
-  const agreementMeaning = signal.confidence >= 80
-    ? "高度一致，方向证据较强，仍需通过净值、风险和基本面验证"
-    : signal.confidence >= 70
-      ? "多数一致，可进入候选验证，不等于已经出现买点"
-      : signal.confidence >= 55
-        ? "部分一致，仅作观察，暂不据此新增仓位"
-        : "分歧较大，不据此操作";
-  setText("#confidenceCopy", `${agreementCount}与最终趋势方向同向；${agreementMeaning}。该比例不是上涨概率。`);
+  const agreementCount = signal.agreement?.total ? `${signal.agreement.aligned}/${signal.agreement.total}个独立证据组` : "独立证据组";
+  const agreementMeaning = signal.conflict && structure?.state === "broken"
+    ? "短期动能与长期骨架明显冲突；防守结论要求长期与中期恶化同时成立，不再由历史回撤单独触发"
+    : structure?.state === "repair"
+      ? `修复证据正在形成，当前动力${structure.repairPower?.label ?? "待确认"}；一致性只表示各周期方向是否同向，不代表上涨概率`
+    : signal.confidence >= 80
+      ? "高度一致，方向证据较强，仍需通过净值、风险和基本面验证"
+      : signal.confidence >= 70
+        ? "多数一致，可进入候选验证，不等于已经出现买点"
+        : signal.confidence >= 55
+          ? "部分一致，仅作观察，暂不据此新增仓位"
+          : "分歧较大，等待更多证据，不依据单一指标行动";
+  setText("#confidenceCopy", `${agreementCount}与结构校准后的方向同向；${agreementMeaning}。各层内部已先合并相关指标，避免重复计票。`);
   $("#scoreRing").style.setProperty("--score-angle", `${(signal.score + 100) / 200 * 360}deg`);
-  $("#scoreRing").style.color = signal.tone === "positive" ? css("--up") : signal.tone === "negative" ? css("--down") : css("--ink");
+  const scoreColor = signal.score > 0 ? css("--up") : signal.score < 0 ? css("--down") : css("--muted");
+  $("#scoreRing").style.setProperty("--score-color", scoreColor);
+  $("#scoreRing").style.color = scoreColor;
+  renderTrendStructure(structure);
 
   if (analogs.sampleCount >= 10) {
     setText("#analogRate", `${analogs.positiveRate.toFixed(1)}%`);
@@ -937,7 +1245,7 @@ function renderFundResearch(research) {
   setText("#systemTags", research.tags.length ? research.tags.join(" / ") : "未识别");
   const trendScore = state.payload?.analysis?.signal?.score ?? 0;
   const composite = research.fundamentalScore == null ? trendScore : Math.round(trendScore * .75 + research.fundamentalScore * .25);
-  setText("#researchConclusion", `${tone.label} · 综合趋势等级 ${formatTrendLevel(composite)}`);
+  setText("#researchConclusion", `${tone.label} · 结构与基本面综合分 ${formatTrendLevel(composite)}`);
 
   $("#holdingsRows").innerHTML = research.topHoldings.length ? research.topHoldings.map((stock) => {
     const companyScore = stock.research?.score;
@@ -1021,11 +1329,11 @@ function renderPayload(payload) {
   setSignedValue("#returnYear", current.periodReturns.year);
   setSignedValue("#currentDrawdown", current.drawdown);
   setText("#volatility", current.volatility == null ? "--" : `${current.volatility.toFixed(2)}%`);
-  $("#volatility").className = current.volatility >= 30 ? "negative-text" : "";
+  $("#volatility").className = current.volatility >= 30 ? "risk-text" : "";
   setText("#kdjValues", `K ${formatNumber(current.k, 1)} · D ${formatNumber(current.d, 1)} · J ${formatNumber(current.j, 1)}`);
   setText("#macdValues", `DIF ${formatNumber(current.dif, 4)} · DEA ${formatNumber(current.dea, 4)}`);
   setText("#rsiValue", formatNumber(current.rsi, 1));
-  renderSignal(signal, analogs);
+  renderSignal(signal, analogs, current.structure);
   renderFactors(signal.factors);
   renderBacktest(analysis.backtest);
   state.charts.forEach((chart) => chart.setData(rows));
@@ -1155,6 +1463,15 @@ function bindControls() {
       loadFund();
     });
   });
+
+  $$("#navSeriesControl button").forEach((button) => button.addEventListener("click", () => setNavChartMode(button.dataset.chartMode)));
+  $$("#mainLegend [data-series]").forEach((button) => button.addEventListener("click", () => toggleNavSeries(button.dataset.series)));
+  $$("#indicatorTabs button").forEach((button) => button.addEventListener("click", () => setIndicatorTab(button.dataset.indicator)));
+  $("#chartFocusButton").addEventListener("click", toggleChartFocus);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.chartFocus) syncChartFocus(false);
+  });
+  window.addEventListener("orientationchange", () => requestAnimationFrame(() => state.charts.forEach((chart) => chart.render())));
 
   $$("#profileControl button").forEach((button) => {
     button.classList.toggle("active", button.dataset.profile === state.profile);
@@ -1295,7 +1612,7 @@ function bindControls() {
     saveStrategySettings();
     strategyModal.hidden = true;
     if (state.portfolioPayload) renderPortfolio(state.portfolioPayload);
-    if (state.payload) renderSignal(state.payload.analysis.signal, state.payload.analysis.analogs);
+    if (state.payload) renderSignal(state.payload.analysis.signal, state.payload.analysis.analogs, state.payload.analysis.current.structure);
     showToast("策略设置已保存");
   });
 
@@ -1303,7 +1620,7 @@ function bindControls() {
   const updateNotificationButton = () => {
     const enabled = ("Notification" in window) && Notification.permission === "granted" && localStorage.getItem("fund-notifications") === "on";
     notificationButton.classList.toggle("active", enabled);
-    notificationButton.querySelector("span").textContent = enabled ? "提醒已开启" : "开启提醒";
+    notificationButton.querySelector("span").textContent = enabled ? "风险与策略提醒已开启" : "开启风险提醒";
   };
   updateNotificationButton();
   notificationButton.addEventListener("click", async () => {
@@ -1312,13 +1629,13 @@ function bindControls() {
     if (localStorage.getItem("fund-notifications") === "on") {
       localStorage.setItem("fund-notifications", "off");
       updateNotificationButton();
-      return showToast("策略变化提醒已关闭");
+      return showToast("风险与策略提醒已关闭");
     }
     const permission = await Notification.requestPermission();
     if (permission === "granted") {
       localStorage.setItem("fund-notifications", "on");
       updateNotificationButton();
-      showToast("提醒已开启，仓位动作发生变化时会发送桌面通知");
+      showToast("风险与策略提醒已开启；网页或 PWA 打开时，候选失效和仓位动作变化会发送通知");
     }
   });
 

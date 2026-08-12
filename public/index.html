@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="面向中国场外基金的净值趋势与风险分析工具">
-  <meta name="theme-color" content="#17201f">
+  <meta name="theme-color" content="#17221f">
   <meta name="robots" content="noindex, nofollow">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="净值罗盘">
@@ -13,7 +13,7 @@
   <title>净值罗盘 | 场外基金趋势实验室</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260811-free1">
+  <link rel="stylesheet" href="/styles.css?v=20260811-ui4">
 </head>
 <body>
   <header class="topbar">
@@ -92,7 +92,7 @@
           <div class="portfolio-actions">
             <button class="command-button" id="notificationButton">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
-              <span>开启提醒</span>
+              <span>开启风险提醒</span>
             </button>
             <button class="icon-button" id="strategyButton" title="策略与止盈目标" aria-label="策略与止盈目标">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10m4 0h2M4 17h3m4 0h9M14 4v6M7 14v6"/></svg>
@@ -130,9 +130,9 @@
 
         <div class="prompt-guide">
           <strong>研判口径</strong>
-          <span><i class="base"></i><b>分批建仓</b> 净值校验、趋势阈值、指标同向率和风险过滤均通过</span>
+          <span><i class="base"></i><b>分批建仓</b> 净值校验、上行结构、证据组一致性和风险约束均通过</span>
           <span><i class="hold"></i><b>持有观察</b> 未触发加仓或退出条件，跟踪中期结构</span>
-          <span><i class="wait"></i><b>等待确认</b> 数据、样本或指标同向率不足</span>
+          <span><i class="wait"></i><b>等待确认</b> 数据、样本或独立证据组尚未统一</span>
           <span><i class="take-profit"></i><b>分批止盈</b> 达到客户目标收益，按计划逐步兑现</span>
           <span><i class="sell"></i><b>风险退出</b> 中长期弱势达到防守阈值</span>
         </div>
@@ -149,6 +149,10 @@
           <div class="market-opportunities-heading">
             <div><span class="eyebrow">公开排行交叉验证</span><h2 id="marketOpportunitiesTitle">全市场板块代表</h2></div>
             <div><p>从近3个月强势候选中识别最近披露持仓，同一主导板块只保留一只，再验证趋势、风险与持仓财务。</p><span id="marketOpportunitiesUpdated">正在扫描公开市场候选</span></div>
+          </div>
+          <div class="market-risk-monitor">
+            <div class="market-risk-summary"><span>候选风险监测</span><strong id="marketRiskStatus">正在建立本地基线</strong><small id="marketRiskCopy">网页或 PWA 打开时，按正式净值节奏检查代表更换与结构恶化</small></div>
+            <div class="market-risk-alerts" id="marketRiskAlerts" hidden></div>
           </div>
           <div class="market-opportunities" id="marketOpportunities"><div class="market-opportunities-empty">首次扫描需要读取候选基金净值和持仓，请稍候</div></div>
         </section>
@@ -177,7 +181,7 @@
 
         <div class="portfolio-table-wrap">
           <table class="portfolio-table">
-            <thead><tr><th>基金</th><th>官方净值</th><th>持有收益</th><th>趋势等级</th><th>当前动作</th><th></th></tr></thead>
+            <thead><tr><th>基金</th><th>官方净值</th><th>持有收益</th><th>结构校准分</th><th>当前动作</th><th></th></tr></thead>
             <tbody id="portfolioRows"></tbody>
           </table>
           <div class="portfolio-empty" id="portfolioEmpty" hidden>当前筛选条件下没有基金</div>
@@ -209,11 +213,11 @@
             <span class="eyebrow">中长期趋势结论</span>
             <h2 id="signalTitle">计算中</h2>
             <p id="signalAction">正在汇总趋势、动能和风险指标。</p>
-            <p class="score-meaning">趋势等级为 -10.0 至 +10.0：+6 以上为强上行结构，+3 至 +5.9 为改善，-2.9 至 +2.9 为混合，-3 至 -5.9 为偏弱，-6 以下进入防守。它衡量中期结构，不预测明天涨跌。</p>
+            <p class="score-meaning">多周期校准分为 -10.0 至 +10.0：长期状态 35%、中期趋势与修复 30%、短期择时 25%、风险约束 10%。各层先独立标准化，再由趋势状态校验；它不是上涨概率。</p>
           </div>
         </div>
         <div class="confidence-block">
-          <div class="confidence-line"><span>有效指标同向率</span><strong id="confidenceValue">--</strong></div>
+          <div class="confidence-line"><span>独立证据组一致性</span><strong id="confidenceValue">--</strong></div>
           <div class="confidence-track"><i id="confidenceBar"></i></div>
           <p id="confidenceCopy">等待指标计算</p>
         </div>
@@ -225,6 +229,13 @@
             <div><strong id="analogCount">--</strong><span>历史样本</span></div>
           </div>
         </div>
+      </section>
+
+      <section class="trend-structure-band" id="trendStructureBand" data-structure="mixed" aria-labelledby="trendStructureLabel">
+        <div class="trend-structure-status"><span>趋势结构状态</span><strong id="trendStructureLabel">计算中</strong></div>
+        <div><p id="trendStructureDetail">正在区分短期回调、修复过程与中长期趋势破坏。</p><small id="trendStructureEvidence">等待均线与动量证据</small></div>
+        <div class="repair-power-block"><span>修复动力</span><strong><b id="repairPowerValue">--</b><small id="repairPowerLabel">证据分</small></strong><p id="repairPowerWarning">仅衡量修复证据，不代表上涨概率</p></div>
+        <div class="trend-structure-advice"><span>风险动作</span><strong id="trendStructureAdvice">等待结构确认</strong></div>
       </section>
 
       <section class="toolbar-band">
@@ -244,38 +255,58 @@
         </div>
       </section>
 
-      <section class="chart-workspace">
+      <section class="chart-workspace" id="chartWorkspace">
         <div class="chart-heading">
           <div>
             <h2>净值与趋势结构</h2>
-            <p>NAV-KDJ 使用滚动净值区间，不等同于场内证券标准 KDJ</p>
+            <p>基于净值区间计算，区别于场内证券标准 KDJ</p>
           </div>
-          <div class="legend" id="mainLegend">
-            <span><i style="--legend:#0e766e"></i>累计净值</span>
-            <span><i style="--legend:#d85a42"></i>MA5</span>
-            <span><i style="--legend:#d78b2e"></i>MA10</span>
-            <span><i style="--legend:#7d6dac"></i>MA20</span>
-            <span><i style="--legend:#477da8"></i>MA60</span>
-            <span><i style="--legend:#67706d"></i>MA120</span>
-            <span><i class="trade-legend buy"></i>历史买入</span>
-            <span><i class="trade-legend sell"></i>历史卖出</span>
+          <div class="chart-actions">
+            <div class="segmented chart-series-control" id="navSeriesControl" aria-label="净值图线组">
+              <button data-chart-mode="core">核心</button>
+              <button data-chart-mode="short">短期</button>
+              <button data-chart-mode="long">长期</button>
+              <button data-chart-mode="all">全部</button>
+            </div>
+            <button class="icon-button" id="chartFocusButton" title="全屏横屏查看" aria-label="全屏横屏查看">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5m13 5h5v-5"/></svg>
+            </button>
           </div>
         </div>
+        <div class="legend interactive-legend" id="mainLegend" aria-label="净值图线条显示">
+          <button data-series="trendNav" aria-pressed="true"><i style="--legend:var(--chart-nav)"></i>累计净值</button>
+          <button data-series="ma5" aria-pressed="true"><i style="--legend:var(--chart-ma5)"></i>MA5</button>
+          <button data-series="ma10" aria-pressed="true"><i style="--legend:var(--chart-ma10)"></i>MA10</button>
+          <button data-series="ma20" aria-pressed="true"><i style="--legend:var(--chart-ma20)"></i>MA20</button>
+          <button data-series="ma60" aria-pressed="true"><i style="--legend:var(--chart-ma60)"></i>MA60</button>
+          <button data-series="ma120" aria-pressed="true"><i style="--legend:var(--chart-ma120)"></i>MA120</button>
+          <span><i class="trade-legend buy"></i>历史买入</span>
+          <span><i class="trade-legend sell"></i>历史卖出</span>
+        </div>
+        <div class="chart-rotate-hint" id="chartRotateHint" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10a3 3 0 0 1 3 3v10M17 20H7a3 3 0 0 1-3-3V7m0 0 3 3M4 7l3-3"/></svg>
+          <span>旋转设备后图表会自动扩展</span>
+        </div>
         <div class="chart-panel primary-chart"><canvas id="navChart" role="img" aria-label="基金累计净值与移动平均线趋势图"></canvas><div class="chart-tooltip" id="navTooltip"></div></div>
+        <div class="segmented indicator-tabs" id="indicatorTabs" aria-label="技术指标图表">
+          <button class="active" data-indicator="kdj">KDJ</button>
+          <button data-indicator="macd">MACD</button>
+          <button data-indicator="rsi">RSI</button>
+        </div>
         <div class="indicator-grid">
-          <div class="indicator-panel">
+          <div class="indicator-panel active" data-indicator-panel="kdj">
             <div class="indicator-title"><strong>NAV-KDJ</strong><span id="kdjValues">K -- · D -- · J --</span></div>
-            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>K 快线</span><span><i style="--legend:#d78b2e"></i>D 慢线</span><span><i style="--legend:#73629d"></i>J 敏感线</span></div>
+            <div class="indicator-legend"><span><i style="--legend:var(--chart-k)"></i>K 快线</span><span><i style="--legend:var(--chart-d)"></i>D 慢线</span><span><i class="dashed" style="--legend:var(--chart-j)"></i>J 敏感线</span></div>
             <div class="chart-panel"><canvas id="kdjChart" role="img" aria-label="基金净值 KDJ 指标趋势图"></canvas><div class="chart-tooltip" id="kdjTooltip"></div></div>
           </div>
-          <div class="indicator-panel">
+          <div class="indicator-panel" data-indicator-panel="macd">
             <div class="indicator-title"><strong>MACD</strong><span id="macdValues">DIF -- · DEA --</span></div>
-            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>DIF</span><span><i style="--legend:#d78b2e"></i>DEA</span><span><i class="bar-legend"></i>动能柱</span></div>
+            <div class="indicator-legend"><span><i style="--legend:var(--chart-k)"></i>DIF</span><span><i class="dashed" style="--legend:var(--chart-d)"></i>DEA</span><span><i class="bar-legend"></i>动能柱</span></div>
             <div class="chart-panel"><canvas id="macdChart" role="img" aria-label="基金净值 MACD 指标趋势图"></canvas><div class="chart-tooltip" id="macdTooltip"></div></div>
           </div>
-          <div class="indicator-panel">
+          <div class="indicator-panel" data-indicator-panel="rsi">
             <div class="indicator-title"><strong>RSI · 14</strong><span id="rsiValue">--</span></div>
-            <div class="indicator-legend"><span><i style="--legend:#0e766e"></i>RSI</span><span><i class="reference-legend"></i>30 / 70 参考线</span></div>
+            <div class="indicator-legend"><span><i style="--legend:var(--chart-rsi)"></i>RSI</span><span><i class="reference-legend"></i>30 / 70 参考线</span></div>
             <div class="chart-panel"><canvas id="rsiChart" role="img" aria-label="基金净值 RSI 指标趋势图"></canvas><div class="chart-tooltip" id="rsiTooltip"></div></div>
           </div>
         </div>
@@ -312,7 +343,7 @@
       <section class="analysis-band">
         <div class="analysis-column">
           <div class="section-title">
-            <div><span class="eyebrow">可解释信号</span><h2>趋势等级依据</h2></div>
+            <div><span class="eyebrow">可解释模型</span><h2>结构校准分依据</h2></div>
             <span class="count-badge" id="factorCount">0 项</span>
           </div>
           <div class="factor-list" id="factorList"></div>
@@ -366,11 +397,12 @@
           <h2>先看趋势，再看风险，最后决定仓位</h2>
         </div>
         <div class="method-steps">
-          <div><b>01</b><strong>趋势确认</strong><span>净值与 MA20、MA60 的位置和方向</span></div>
-          <div><b>02</b><strong>动能共振</strong><span>NAV-KDJ、MACD、RSI 是否指向一致</span></div>
-          <div><b>03</b><strong>风险过滤</strong><span>回撤、波动与追涨风险是否可接受</span></div>
+          <div><b>01</b><strong>结构确认</strong><span>净值、MA20、MA60、MA120 是否保持一致</span></div>
+          <div><b>02</b><strong>分组标准化</strong><span>相关指标先组内合并，不重复计票</span></div>
+          <div><b>03</b><strong>风险约束</strong><span>回撤、波动与结构破坏优先限制分数</span></div>
           <div><b>04</b><strong>分批执行</strong><span>用仓位和时间分散单一信号失误</span></div>
         </div>
+        <p class="developer-notice">© 2026 净值罗盘。软件、界面、评分模型与文档保留全部权利；未经书面授权不得复制部署、再分发或商业化。</p>
       </section>
       </div>
     </main>
@@ -420,6 +452,6 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script type="module" src="/app.js?v=20260811-free1"></script>
+  <script type="module" src="/app.js?v=20260811-ui4"></script>
 </body>
 </html>

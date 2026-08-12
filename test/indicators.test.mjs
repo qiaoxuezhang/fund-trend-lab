@@ -19,6 +19,17 @@ function samplePoints(length = 420, direction = 1) {
   });
 }
 
+function lowPositionRecoveryPoints() {
+  return Array.from({ length: 420 }, (_, index) => {
+    let nav;
+    if (index < 300) nav = 1 + index * 0.0005;
+    else if (index < 390) nav = 1.15 + (index - 300) * 0.016;
+    else if (index < 415) nav = 2.574 - (index - 390) * 0.045;
+    else nav = 1.494 + (index - 414) * 0.081;
+    return { timestamp: Date.UTC(2025, 0, 1) + index * 24 * 60 * 60 * 1000, nav };
+  });
+}
+
 test("NAV-KDJ stays finite for flat data", () => {
   const result = kdj(Array(30).fill(1));
   assert.equal(result.k.at(-1), 50);
@@ -29,6 +40,7 @@ test("NAV-KDJ stays finite for flat data", () => {
 test("analysis produces a positive trend score for a rising series", () => {
   const analysis = analyzeFund(samplePoints(420, 1), "balanced");
   assert.ok(analysis.signal.score > 0);
+  assert.equal(analysis.current.structure.state, "trend");
   assert.equal(analysis.rows.length, 420);
   assert.ok(Number.isFinite(analysis.current.ma5));
   assert.ok(Number.isFinite(analysis.current.ma10));
@@ -36,16 +48,68 @@ test("analysis produces a positive trend score for a rising series", () => {
   assert.ok(analysis.backtest.trades >= 1);
 });
 
-test("indicator agreement is the share of effective factors aligned with the final direction", () => {
+test("model agreement uses independent evidence-group weights", () => {
   const { signal } = analyzeFund(samplePoints(420, 1), "balanced");
   assert.ok(signal.agreement.total > 0);
-  assert.equal(signal.confidence, Math.round(signal.agreement.aligned / signal.agreement.total * 100));
+  assert.equal(signal.confidence, Math.round(signal.agreement.alignedWeight / signal.agreement.totalWeight * 100));
+  assert.equal(signal.model.version, "multi-horizon-v3");
+  assert.deepEqual(signal.factors.slice(0, 4).map((factor) => factor.key), ["longRegime", "mediumTrend", "shortTiming", "risk"]);
+  assert.equal(signal.factors.reduce((sum, factor) => sum + factor.points, 0), signal.score);
+});
+
+test("deep drawdown alone does not turn a low-position recovery into a broken trend", () => {
+  const analysis = analyzeFund(lowPositionRecoveryPoints(), "balanced");
+  assert.ok(analysis.current.drawdown <= -20);
+  assert.equal(analysis.current.structure.state, "repair");
+  assert.equal(analysis.current.structure.label, "低位修复");
+  assert.ok(analysis.current.structure.repairPower.score >= 65);
+  assert.ok(analysis.current.trendNav > analysis.current.ma20);
+  assert.ok(analysis.current.trendNav < analysis.current.ma60);
+  assert.ok(analysis.current.ma60 > analysis.current.ma120);
+  assert.match(analysis.signal.signal, /低位修复/);
+});
+
+test("repair power is an evidence score with explicit heat warnings", () => {
+  const analysis = analyzeFund(lowPositionRecoveryPoints(), "balanced");
+  const repair = analysis.current.structure.repairPower;
+  assert.ok(repair.score >= 0 && repair.score <= 100);
+  assert.ok(repair.evidence.includes("MACD 柱已转正"));
+  assert.ok(repair.cautions.includes("KDJ 短期过热"));
+});
+
+test("recovery classification and score stay objective across risk profiles", () => {
+  const results = ["conservative", "balanced", "aggressive"].map((profile) => analyzeFund(lowPositionRecoveryPoints(), profile));
+  assert.deepEqual(results.map((analysis) => analysis.current.structure.state), ["repair", "repair", "repair"]);
+  assert.deepEqual(results.map((analysis) => analysis.signal.score), [results[0].signal.score, results[0].signal.score, results[0].signal.score]);
+  assert.deepEqual(results.map((analysis) => analysis.current.structure.repairPower.score), [results[0].current.structure.repairPower.score, results[0].current.structure.repairPower.score, results[0].current.structure.repairPower.score]);
 });
 
 test("analysis produces a negative trend score for a falling series", () => {
   const analysis = analyzeFund(samplePoints(420, -1), "balanced");
   assert.ok(analysis.signal.score < 0);
+  assert.ok(analysis.signal.score <= analysis.signal.threshold.reduce);
+  assert.match(analysis.signal.signal, /趋势破坏/);
   assert.ok(analysis.current.drawdown < 0);
+  assert.equal(analysis.current.structure.state, "broken");
+});
+
+test("objective structure score does not change with customer risk profile", () => {
+  const points = samplePoints(420, -1);
+  const results = ["conservative", "balanced", "aggressive"].map((profile) => analyzeFund(points, profile));
+  assert.deepEqual(results.map((analysis) => analysis.signal.score), [results[0].signal.score, results[0].signal.score, results[0].signal.score]);
+  assert.deepEqual(results.map((analysis) => analysis.current.structure.state), ["broken", "broken", "broken"]);
+});
+
+test("analysis distinguishes a short pullback from a broken long-term trend", () => {
+  const points = samplePoints(420, 1).map((point, index) => index > 408
+    ? { ...point, nav: point.nav - (index - 408) * 0.0025 }
+    : point);
+  const analysis = analyzeFund(points, "balanced");
+  assert.equal(analysis.current.structure.state, "pullback");
+  assert.ok(analysis.current.trendNav > analysis.current.ma60);
+  assert.ok(analysis.signal.score > analysis.signal.threshold.reduce);
+  assert.ok(analysis.signal.score < analysis.signal.threshold.attention);
+  assert.match(analysis.signal.signal, /短期回调/);
 });
 
 test("range slicing keeps only the selected calendar window", () => {
@@ -115,6 +179,13 @@ test("portfolio strategy separates build, hold and exit signals", () => {
   assert.equal(decidePortfolioAction({ ...shared, technicalState: "watch", compositeScore: 30, confidence: 60, hasHolding: true }).state, "hold");
   assert.equal(decidePortfolioAction({ ...shared, technicalState: "risk", compositeScore: -45 }).state, "sell");
   assert.equal(decidePortfolioAction({ ...shared, technicalState: "candidate", confidence: 69 }).state, "wait");
+});
+
+test("portfolio strategy treats pullbacks differently from broken trends", () => {
+  const shared = { technicalState: "candidate", score: 55, compositeScore: 55, confidence: 78, attentionThreshold: 40, reduceThreshold: -40, targetPct: 20, dataQuality: "verified", lagBusinessDays: 0 };
+  assert.equal(decidePortfolioAction({ ...shared, structureState: "pullback" }).state, "wait");
+  assert.equal(decidePortfolioAction({ ...shared, structureState: "pullback", hasHolding: true }).state, "hold");
+  assert.equal(decidePortfolioAction({ ...shared, structureState: "broken", hasHolding: true }).state, "sell");
 });
 
 test("encrypted vault round-trips private portfolio data", async () => {

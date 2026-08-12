@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>访问验证 | 净值罗盘</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/access.css">
+</head>
+<body>
+  <main class="access-shell">
+    <section class="access-panel" aria-labelledby="accessTitle">
+      <div class="brand-mark">N</div>
+      <span class="eyebrow">受保护的研究工具</span>
+      <h1 id="accessTitle">净值罗盘</h1>
+      <p>请输入访问密码。验证仅在服务器完成，密码不会写入网页源码或保存在当前设备。</p>
+      <form id="accessForm">
+        <label for="accessPassword">访问密码</label>
+        <div class="password-row">
+          <input id="accessPassword" name="password" type="password" autocomplete="current-password" required autofocus>
+          <button type="button" id="togglePassword" aria-label="显示或隐藏密码" title="显示或隐藏密码">显示</button>
+        </div>
+        <button class="submit-button" type="submit">进入平台</button>
+        <p class="status" id="accessStatus" role="status"></p>
+      </form>
+      <small>平台内容仅供授权用户进行基金研究，不构成投资建议。</small>
+    </section>
+  </main>
+  <script src="/access.js" defer></script>
+</body>
+</html>

@@ -139,97 +139,110 @@ const profileThresholds = {
   aggressive: { attention: 25, reduce: -46 }
 };
 
+function weightedMean(items) {
+  const usable = items.filter((item) => Number.isFinite(item.value) && item.weight > 0);
+  const weight = usable.reduce((sum, item) => sum + item.weight, 0);
+  return weight ? usable.reduce((sum, item) => sum + item.value * item.weight, 0) / weight : 0;
+}
+
+function normalizedGap(value, benchmark, scalePct) {
+  if (!Number.isFinite(value) || !Number.isFinite(benchmark) || benchmark === 0) return null;
+  return Math.tanh(((value / benchmark - 1) * 100) / scalePct);
+}
+
+function normalizedValue(value, scale) {
+  return Number.isFinite(value) ? Math.tanh(value / scale) : null;
+}
+
+function scoreNarrative(score, threshold) {
+  if (score >= threshold.attention) return { signal: "趋势证据通过", action: "独立证据组达到当前模式阈值，仍需结合结构状态、数据质量和基本面决定动作", tone: "positive" };
+  if (score <= threshold.reduce) return { signal: "弱势证据占优", action: "综合证据已进入防守区，等待结构重新修复", tone: "negative" };
+  return { signal: "证据尚未统一", action: "综合分未达到建仓或退出阈值，继续等待结构和动量形成一致", tone: "neutral" };
+}
+
+function agreementForGroups(groups, score) {
+  const direction = Math.sign(score);
+  const effective = groups.filter((group) => Math.abs(group.value) >= 0.08 && group.key !== "risk");
+  const aligned = effective.filter((group) => Math.sign(group.value) === direction);
+  const totalWeight = effective.reduce((sum, group) => sum + group.weight, 0);
+  const alignedWeight = aligned.reduce((sum, group) => sum + group.weight, 0);
+  return {
+    confidence: direction && totalWeight ? Math.round(alignedWeight / totalWeight * 100) : 0,
+    agreement: { aligned: aligned.length, total: effective.length, alignedWeight: round(alignedWeight, 3), totalWeight: round(totalWeight, 3) }
+  };
+}
+
 function scoreAt(rows, index, profile = "balanced") {
   const row = rows[index];
-  const previous = rows[Math.max(0, index - 1)];
   const values = rows.map((item) => item.trendNav);
-  const factors = [];
-  let score = 0;
-
-  const add = (key, label, points, detail) => {
-    score += points;
-    factors.push({ key, label, points, detail, tone: points > 2 ? "positive" : points < -2 ? "negative" : "neutral" });
-  };
-
-  if (row.ma20 != null) add("ma20", "20日趋势", row.trendNav >= row.ma20 ? 10 : -10, row.trendNav >= row.ma20 ? "累计净值位于20日均线上方" : "累计净值位于20日均线下方");
-  if (row.ma60 != null && row.ma20 != null) add("ma60", "20-60日排列", row.ma20 >= row.ma60 ? 10 : -10, row.ma20 >= row.ma60 ? "20日均线高于60日均线" : "20日均线低于60日均线");
-  if (row.ma120 != null && row.ma60 != null) add("ma120", "60-120日排列", row.ma60 >= row.ma120 ? 12 : -12, row.ma60 >= row.ma120 ? "60日均线高于120日均线" : "60日均线低于120日均线");
-  if (index >= 5 && row.ma20 != null && rows[index - 5].ma20 != null) add("slope", "均线方向", row.ma20 >= rows[index - 5].ma20 ? 8 : -8, row.ma20 >= rows[index - 5].ma20 ? "20日均线近5日向上" : "20日均线近5日向下");
-
-  const golden = crossedAbove(rows.map((item) => item.k), rows.map((item) => item.d), index);
-  const dead = crossedBelow(rows.map((item) => item.k), rows.map((item) => item.d), index);
-  add("kdj", "NAV-KDJ", golden ? 10 : dead ? -10 : row.k >= row.d ? 5 : -5, golden ? "近3个净值日形成金叉，仅作为短周期辅助" : dead ? "近3个净值日形成死叉，仅作为短周期辅助" : row.k >= row.d ? "K值保持在D值上方" : "K值处于D值下方");
-
-  const macdCrossUp = previous.macdHist != null && previous.macdHist <= 0 && row.macdHist > 0;
-  const macdCrossDown = previous.macdHist != null && previous.macdHist >= 0 && row.macdHist < 0;
-  add("macd", "MACD动能", macdCrossUp ? 12 : macdCrossDown ? -12 : row.macdHist >= 0 ? 8 : -8, macdCrossUp ? "柱体刚转为正值" : macdCrossDown ? "柱体刚转为负值" : row.macdHist >= 0 ? "中短期动能为正" : "中短期动能为负");
-
-  let rsiPoints = 0;
-  let rsiDetail = "RSI处于中性区间";
-  if (row.rsi != null) {
-    if (row.rsi >= 75) { rsiPoints = -6; rsiDetail = "RSI较高，追涨风险上升"; }
-    else if (row.rsi >= 55) { rsiPoints = 4; rsiDetail = "RSI显示趋势动能健康"; }
-    else if (row.rsi < 30) { rsiPoints = row.rsi > (previous.rsi ?? row.rsi) ? 4 : -3; rsiDetail = rsiPoints > 0 ? "超卖区出现回升" : "仍在超卖区，尚待转向"; }
-    else if (row.rsi < 45) { rsiPoints = -4; rsiDetail = "RSI偏弱"; }
-  }
-  add("rsi", "RSI强弱", rsiPoints, rsiDetail);
-
+  const volatility = Number.isFinite(row.volatility) ? row.volatility : 25;
+  const gapScale = clamp(volatility / Math.sqrt(250) * 2.5, 2, 6);
+  const ma20FiveDaysAgo = rows[Math.max(0, index - 5)]?.ma20;
+  const ma60TenDaysAgo = rows[Math.max(0, index - 10)]?.ma60;
+  const macdFiveDaysAgo = rows[Math.max(0, index - 5)]?.macdHist;
+  const momentum5 = pctChange(values, index, 5);
   const momentum20 = pctChange(values, index, 20);
   const momentum60 = pctChange(values, index, 60);
   const momentum120 = pctChange(values, index, 120);
-  if (momentum20 != null) add("momentum", "20日动量", momentum20 >= 0 ? 5 : -5, `近20个净值日${momentum20 >= 0 ? "上涨" : "下跌"}${Math.abs(momentum20).toFixed(2)}%`);
-  if (momentum60 != null) add("medium", "60日动量", momentum60 >= 0 ? 8 : -8, `近60个净值日${momentum60 >= 0 ? "上涨" : "下跌"}${Math.abs(momentum60).toFixed(2)}%`);
-  if (momentum120 != null) add("longMomentum", "120日动量", momentum120 >= 0 ? 10 : -10, `近120个净值日${momentum120 >= 0 ? "上涨" : "下跌"}${Math.abs(momentum120).toFixed(2)}%`);
-  if (row.upRatio20 != null) {
-    const persistencePoints = row.upRatio20 >= 55 ? 6 : row.upRatio20 <= 45 ? -6 : 0;
-    add("persistence", "趋势持续性", persistencePoints, `近20个净值日中上涨日占${row.upRatio20.toFixed(0)}%`);
-  }
 
-  let riskPoints = 0;
-  const riskNotes = [];
-  if (row.drawdown <= -25) { riskPoints -= 8; riskNotes.push("近250净值日回撤超过25%"); }
-  else if (row.drawdown <= -15) { riskPoints -= 4; riskNotes.push("近250净值日回撤超过15%"); }
-  if (row.volatility >= 35) { riskPoints -= 6; riskNotes.push("年化波动较高"); }
-  else if (row.volatility >= 25) { riskPoints -= 4; riskNotes.push("年化波动偏高"); }
-  add("risk", "风险过滤", riskPoints, riskNotes.length ? riskNotes.join("，") : "回撤和波动未触发额外扣分");
+  const longRegimeValue = weightedMean([
+    { value: normalizedGap(row.ma60, row.ma120, gapScale * 1.35), weight: 0.45 },
+    { value: normalizedGap(row.ma60, ma60TenDaysAgo, Math.max(1, gapScale * 0.8)), weight: 0.3 },
+    { value: normalizedValue(momentum120, Math.max(12, volatility * Math.sqrt(120 / 250) * 1.2)), weight: 0.25 }
+  ]);
+  const mediumTrendValue = weightedMean([
+    { value: normalizedGap(row.trendNav, row.ma20, gapScale), weight: 0.25 },
+    { value: normalizedGap(row.ma20, row.ma60, gapScale * 1.15), weight: 0.25 },
+    { value: normalizedGap(row.ma20, ma20FiveDaysAgo, Math.max(1, gapScale * 0.55)), weight: 0.2 },
+    { value: normalizedValue(momentum20, Math.max(4, volatility * Math.sqrt(20 / 250) * 1.2)), weight: 0.15 },
+    { value: normalizedValue(momentum60, Math.max(8, volatility * Math.sqrt(60 / 250) * 1.2)), weight: 0.15 }
+  ]);
+  const macdValue = Number.isFinite(row.macdHist) && row.trendNav ? Math.tanh((row.macdHist / row.trendNav * 100) / 0.35) : null;
+  const macdImprovement = Number.isFinite(row.macdHist) && Number.isFinite(macdFiveDaysAgo) && row.trendNav
+    ? Math.tanh(((row.macdHist - macdFiveDaysAgo) / row.trendNav * 100) / 0.3)
+    : null;
+  const rsiValue = Number.isFinite(row.rsi) ? Math.tanh((row.rsi - 50) / 15) : null;
+  const kdjValue = Number.isFinite(row.k) && Number.isFinite(row.d) ? Math.tanh((row.k - row.d) / 12) : null;
+  const persistenceValue = Number.isFinite(row.upRatio20) ? Math.tanh((row.upRatio20 - 50) / 12) : null;
+  const shortValue = weightedMean([
+    { value: normalizedGap(row.ma5, row.ma10, Math.max(1, gapScale * 0.5)), weight: 0.2 },
+    { value: normalizedValue(momentum5, Math.max(2, volatility * Math.sqrt(5 / 250) * 1.15)), weight: 0.15 },
+    { value: macdValue, weight: 0.2 },
+    { value: macdImprovement, weight: 0.15 },
+    { value: rsiValue, weight: 0.12 },
+    { value: kdjValue, weight: 0.08 },
+    { value: persistenceValue, weight: 0.1 }
+  ]);
+  const drawdownPenalty = clamp((-(row.drawdown ?? 0) - 10) / 20, 0, 1);
+  const volatilityPenalty = clamp((volatility - 25) / 35, 0, 1);
+  const rsiHeatPenalty = clamp(((row.rsi ?? 50) - 70) / 18, 0, 1);
+  const kdjHeatPenalty = clamp(((row.j ?? 50) - 100) / 40, 0, 1);
+  const verticalRisePenalty = clamp(((momentum5 ?? 0) - 10) / 15, 0, 1);
+  const riskValue = -(drawdownPenalty * 0.35 + volatilityPenalty * 0.35 + rsiHeatPenalty * 0.1 + kdjHeatPenalty * 0.1 + verticalRisePenalty * 0.1);
 
-  score = Math.round(clamp(score, -100, 100));
+  const groups = [
+    { key: "longRegime", label: "长期状态", value: longRegimeValue, weight: 0.35, detail: `MA60/MA120、MA60十日方向和120日动量共同判断长期骨架；不再用历史回撤单独判定趋势破坏` },
+    { key: "mediumTrend", label: "中期趋势与修复", value: mediumTrendValue, weight: 0.3, detail: `净值/MA20、MA20/MA60、MA20方向及20/60日动量共同衡量修复是否能延续` },
+    { key: "shortTiming", label: "短期择时", value: shortValue, weight: 0.25, detail: `MA5/MA10、5日动量、MACD及其改善、RSI、NAV-KDJ与上涨日占比在组内验证：5日 ${momentum5 == null ? "--" : `${momentum5.toFixed(1)}%`}` },
+    { key: "risk", label: "风险约束", value: riskValue, weight: 0.1, detail: `当前回撤 ${(row.drawdown ?? 0).toFixed(1)}%，年化波动 ${volatility.toFixed(1)}%；过热、急涨、回撤和高波动只降低可操作性，不直接证明趋势继续恶化` }
+  ];
+  const factors = groups.map((group) => {
+    const points = Math.round(group.value * group.weight * 100);
+    return { key: group.key, label: group.label, points, detail: group.detail, tone: points > 2 ? "positive" : points < -2 ? "negative" : "neutral" };
+  });
+  const score = Math.round(clamp(factors.reduce((sum, factor) => sum + factor.points, 0), -100, 100));
   const threshold = profileThresholds[profile] ?? profileThresholds.balanced;
-  let signal = score >= 0 ? "方向不清，继续观察" : "震荡偏弱，等待企稳";
-  let action = score >= 0 ? "中长期指标仍有分歧，暂不新增仓位" : "趋势尚未企稳，等待60日动量或均线结构改善";
-  let tone = "neutral";
-  if (score >= Math.max(65, threshold.attention + 15)) {
-    signal = "中期趋势偏强";
-    action = "中长期趋势保持向上；已有持仓可观察，新增仓位仍应分批";
-    tone = "positive";
-  } else if (score >= threshold.attention) {
-    signal = "可分批建仓";
-    action = "20-120日趋势达到当前阈值，可结合估值和仓位分批执行";
-    tone = "positive";
-  } else if (score <= Math.min(-65, threshold.reduce - 15)) {
-    signal = "中期趋势偏弱";
-    action = "优先控制仓位，等待60日动量和均线结构重新转强";
-    tone = "negative";
-  } else if (score <= threshold.reduce) {
-    signal = "弱势防守";
-    action = "中期弱势证据较多，可结合持有期限与费用降低风险暴露";
-  } else if (score >= 15) {
-    signal = "震荡偏强，等待突破";
-    action = "趋势正在改善，但尚未达到建仓阈值，继续观察60日动量";
-    tone = "positive";
-  }
-  const effectiveFactors = factors.filter((factor) => factor.points !== 0);
-  const alignedFactors = effectiveFactors.filter((factor) => Math.sign(factor.points) === Math.sign(score));
-  const confidence = score === 0 ? 0 : Math.round(alignedFactors.length / Math.max(1, effectiveFactors.length) * 100);
+  const narrative = scoreNarrative(score, threshold);
+  const agreement = agreementForGroups(groups, score);
   return {
     score,
-    signal,
-    action,
-    tone,
-    confidence,
-    agreement: { aligned: alignedFactors.length, total: effectiveFactors.length },
+    ...narrative,
+    confidence: agreement.confidence,
+    agreement: agreement.agreement,
     factors,
-    threshold
+    groups,
+    threshold,
+    model: { version: "multi-horizon-v3", weights: { longRegime: 35, mediumTrend: 30, shortTiming: 25, risk: 10 } }
   };
 }
 
@@ -302,6 +315,203 @@ function backtest(rows, profile = "balanced", transactionCost = 0.0015) {
   };
 }
 
+function calculateRepairPower(rows, index, periodReturns) {
+  const row = rows[index];
+  const fiveDaysAgo = rows[Math.max(0, index - 5)];
+  const tenDaysAgo = rows[Math.max(0, index - 10)];
+  const positive = [];
+  const cautions = [];
+  let score = 0;
+  const add = (condition, points, evidence) => {
+    if (!condition) return;
+    score += points;
+    positive.push(evidence);
+  };
+
+  add(Number.isFinite(row.ma20) && row.trendNav >= row.ma20, 18, "净值已站回 MA20");
+  add(Number.isFinite(row.ma5) && Number.isFinite(row.ma10) && row.ma5 > row.ma10, 12, "MA5 高于 MA10");
+  add(Number.isFinite(row.macdHist) && row.macdHist > 0, 18, "MACD 柱已转正");
+  add(Number.isFinite(row.macdHist) && Number.isFinite(fiveDaysAgo?.macdHist) && row.macdHist > fiveDaysAgo.macdHist, 12, "MACD 较五日前改善");
+  add(Number.isFinite(row.rsi) && row.rsi >= 48 && row.rsi <= 68, 10, "RSI 回到中性偏强区");
+  add(Number.isFinite(periodReturns.week) && periodReturns.week > 0, 10, "近5日收益转正");
+  add(Number.isFinite(periodReturns.month) && periodReturns.month > 0, 6, "近20日收益转正");
+  add(Number.isFinite(row.ma60) && Number.isFinite(tenDaysAgo?.ma60) && row.ma60 >= tenDaysAgo.ma60, 8, "MA60 仍在走平或向上");
+  add(Number.isFinite(row.ma60) && Number.isFinite(row.ma120) && row.ma60 >= row.ma120, 6, "MA60 仍高于 MA120");
+
+  if (Number.isFinite(row.j) && row.j > 100) {
+    score -= clamp((row.j - 100) / 3, 6, 12);
+    cautions.push("KDJ 短期过热");
+  }
+  if (Number.isFinite(row.volatility) && row.volatility > 55) {
+    score -= clamp((row.volatility - 55) / 3, 6, 16);
+    cautions.push("波动率很高");
+  }
+  if (Number.isFinite(periodReturns.week) && periodReturns.week > 15) {
+    score -= clamp((periodReturns.week - 15) / 2, 3, 10);
+    cautions.push("近5日反弹过快");
+  }
+
+  const bounded = Math.round(clamp(score, 0, 100));
+  const label = bounded >= 65 ? "较强" : bounded >= 50 ? "中等" : bounded >= 30 ? "偏弱" : "尚未形成";
+  return { score: bounded, label, evidence: positive, cautions };
+}
+
+function classifyTrendStructure(rows, index, signal, periodReturns) {
+  const row = rows[index];
+  const ma20FiveDaysAgo = rows[Math.max(0, index - 5)]?.ma20;
+  const ma60TenDaysAgo = rows[Math.max(0, index - 10)]?.ma60;
+  const above20 = Number.isFinite(row.ma20) && row.trendNav >= row.ma20;
+  const above60 = Number.isFinite(row.ma60) && row.trendNav >= row.ma60;
+  const above120 = Number.isFinite(row.ma120) && row.trendNav >= row.ma120;
+  const ma20Above60 = Number.isFinite(row.ma20) && Number.isFinite(row.ma60) && row.ma20 >= row.ma60;
+  const ma60Above120 = Number.isFinite(row.ma60) && Number.isFinite(row.ma120) && row.ma60 >= row.ma120;
+  const ma20Rising = Number.isFinite(row.ma20) && Number.isFinite(ma20FiveDaysAgo) && row.ma20 >= ma20FiveDaysAgo;
+  const ma60Rising = Number.isFinite(row.ma60) && Number.isFinite(ma60TenDaysAgo) && row.ma60 >= ma60TenDaysAgo;
+  const monthWeak = Number.isFinite(periodReturns.month) && periodReturns.month < 0;
+  const quarterWeak = Number.isFinite(periodReturns.quarter) && periodReturns.quarter < 0;
+  const longMomentumWeak = Number.isFinite(periodReturns.year) && periodReturns.year < 0;
+  const shortMomentumWeak = !above20 || monthWeak || row.rsi < 45 || row.macdHist < 0;
+  const longStructureIntact = above60 && ma60Above120 && ma60Rising;
+  const longDeterioration = [!above120, !ma60Above120, !ma60Rising, quarterWeak, longMomentumWeak].filter(Boolean).length;
+  const mediumDeterioration = [!above20, !above60, !ma20Above60, !ma20Rising, monthWeak, row.macdHist < 0].filter(Boolean).length;
+  const longGroup = signal.groups?.find((group) => group.key === "longRegime")?.value ?? 0;
+  const mediumGroup = signal.groups?.find((group) => group.key === "mediumTrend")?.value ?? 0;
+  const hardBreak = (longDeterioration >= 3 && mediumDeterioration >= 3)
+    || (longGroup <= -0.55 && mediumGroup <= -0.45 && longDeterioration >= 2);
+  const repairPower = calculateRepairPower(rows, index, periodReturns);
+
+  if (hardBreak) {
+    return {
+      state: "broken",
+      label: "趋势破坏",
+      severity: "high",
+      detail: "长期骨架与中期趋势同时恶化，弱势已不再只是一次短期回调。历史回撤仅作为风险背景，不参与一票否决。",
+      advice: "停止新增仓位；已有持仓结合赎回费用、持有期限和替代方案控制风险，等待长期骨架与中期趋势同时修复。",
+      evidence: [!above120 ? "净值低于 MA120" : null, !ma60Above120 ? "MA60 低于 MA120" : null, !ma60Rising ? "MA60 近十日向下" : null, quarterWeak ? "近60日动量为负" : null, !above60 ? "净值低于 MA60" : null, !ma20Rising ? "MA20 仍向下" : null].filter(Boolean),
+      repairPower
+    };
+  }
+
+  if (longStructureIntact && shortMomentumWeak) {
+    return {
+      state: "pullback",
+      label: "短期回调",
+      severity: "watch",
+      detail: "短期动量转弱，但净值仍在 MA60 上方且 MA60 未跌破 MA120，中长期骨架暂未破坏。",
+      advice: "不因单个净值日下跌直接退出；等待 MA20 止跌或动能转正。若净值跌破 MA60 且 MA20 下穿 MA60，升级为趋势破坏。",
+      evidence: [!above20 ? "净值低于 MA20" : null, monthWeak ? "近一月收益转负" : null, row.rsi < 45 ? "RSI 偏弱" : null, row.macdHist < 0 ? "MACD 动能为负" : null].filter(Boolean),
+      repairPower
+    };
+  }
+
+  if (above20 && ma20Above60 && ma60Above120 && ma20Rising) {
+    return {
+      state: "trend",
+      label: "上行结构",
+      severity: "normal",
+      detail: "净值位于 MA20 上方，MA20、MA60、MA120 保持多头排列，且 MA20 近五个净值日未转弱。",
+      advice: "已有持仓以跟踪和分批纪律为主；新增仓位仍需避免在短期过热时一次追入。",
+      evidence: ["净值高于 MA20", "MA20 高于 MA60", "MA60 高于 MA120"],
+      repairPower
+    };
+  }
+
+  if (above20 && repairPower.score >= 40 && (!above60 || !ma20Above60 || !ma20Rising)) {
+    return {
+      state: "repair",
+      label: "低位修复",
+      severity: "watch",
+      detail: `短期与中期修复证据正在增加，修复动力${repairPower.label}；但尚未完成中期反转确认。`,
+      advice: "不追涨、不按趋势破坏处理；已有持仓以观察为主，无持仓等待 MA20 拐头并重新站回 MA60 后再研究分批建仓。",
+      evidence: [...repairPower.evidence.slice(0, 4), !above60 ? "净值尚未站回 MA60" : null, !ma20Rising ? "MA20 尚未拐头向上" : null].filter(Boolean),
+      repairPower
+    };
+  }
+
+  return {
+    state: "mixed",
+    label: "震荡混合",
+    severity: "watch",
+    detail: "短中长期证据仍有分歧，暂时不能归类为健康回调或明确趋势破坏。",
+    advice: "保持观察，等待净值与 MA20、MA60 的位置以及 MA20 方向形成一致信号。",
+    evidence: [above60 ? "净值仍高于 MA60" : "净值低于 MA60", ma60Above120 ? "长期排列尚可" : "长期排列偏弱"],
+    repairPower
+  };
+}
+
+function reconcileSignalWithStructure(signal, structure) {
+  const threshold = signal.threshold;
+  let score = signal.score;
+  let adjustment = 0;
+  let signalText = signal.signal;
+  let action = signal.action;
+  let tone = signal.tone;
+  let conflict = null;
+
+  if (structure.state === "broken") {
+    const capped = Math.min(score, -40);
+    adjustment = capped - score;
+    score = capped;
+    signalText = "趋势破坏，进入防守";
+    action = structure.advice;
+    tone = "negative";
+    if (adjustment) conflict = "短期动能与中长期风险结构存在重大分歧；模型按风险优先原则执行结构约束。";
+  } else if (structure.state === "pullback") {
+    const capped = clamp(score, -20, 30);
+    adjustment = capped - score;
+    score = capped;
+    signalText = "短期回调，中期结构仍完整";
+    action = structure.advice;
+    tone = "neutral";
+    if (adjustment) conflict = "原始动量分超出回调状态允许区间，已按中长期结构进行校准。";
+  } else if (structure.state === "repair") {
+    const capped = clamp(score, -10, 35);
+    adjustment = capped - score;
+    score = capped;
+    signalText = `低位修复，动力${structure.repairPower?.label ?? "待确认"}，中期反转未确认`;
+    action = structure.advice;
+    tone = "neutral";
+    if (adjustment) conflict = "短期指标已回暖，但 MA20 方向与 MA60 位置尚未确认，综合分仍限制在观察区。";
+  } else if (structure.state === "mixed") {
+    const capped = clamp(score, -25, 25);
+    adjustment = capped - score;
+    score = capped;
+    signalText = "结构混合，等待统一";
+    action = structure.advice;
+    tone = "neutral";
+    if (adjustment) conflict = "不同期限证据方向不一致，综合分已限制在观察区间。";
+  } else {
+    signalText = score >= threshold.attention ? "上行结构，趋势证据通过" : "上行结构，等待强度确认";
+    action = structure.advice;
+    tone = score >= 0 ? "positive" : "neutral";
+  }
+
+  const factors = [...signal.factors];
+  if (adjustment) {
+    factors.push({
+      key: "structureGate",
+      label: "结构一致性约束",
+      points: adjustment,
+      detail: `${structure.label}对原始分 ${signal.score > 0 ? "+" : ""}${signal.score} 进行校准，避免短期指标与中长期风险结论互相矛盾`,
+      tone: adjustment > 2 ? "positive" : adjustment < -2 ? "negative" : "neutral"
+    });
+  }
+  const groupAgreement = agreementForGroups(signal.groups, score);
+  return {
+    ...signal,
+    score,
+    signal: signalText,
+    action,
+    tone,
+    confidence: groupAgreement.confidence,
+    agreement: groupAgreement.agreement,
+    factors,
+    conflict,
+    rawScore: signal.score,
+    structureState: structure.state
+  };
+}
+
 export function analyzeFund(points, profile = "balanced") {
   const clean = points
     .filter((point) => Number.isFinite(point.nav) && Number.isFinite(point.timestamp))
@@ -342,23 +552,45 @@ export function analyzeFund(points, profile = "balanced") {
     drawdown: round(drawdown[index], 2),
     upRatio20: round(upRatio20[index], 1)
   }));
+  let currentSignal = null;
+  let currentStructure = null;
   for (let index = 0; index < rows.length; index += 1) {
-    rows[index].score = index < 60 ? null : scoreAt(rows, index, profile).score;
+    if (index < 60) {
+      rows[index].score = null;
+      continue;
+    }
+    const rawSignal = scoreAt(rows, index, profile);
+    const indexReturns = {
+      week: round(pctChange(values, index, 5), 2),
+      month: round(pctChange(values, index, 20), 2),
+      quarter: round(pctChange(values, index, 60), 2),
+      year: round(pctChange(values, index, 250), 2)
+    };
+    const structure = classifyTrendStructure(rows, index, rawSignal, indexReturns);
+    const reconciled = reconcileSignalWithStructure(rawSignal, structure);
+    rows[index].score = reconciled.score;
+    if (index === rows.length - 1) {
+      currentSignal = reconciled;
+      currentStructure = structure;
+    }
   }
   const currentIndex = rows.length - 1;
-  const signal = scoreAt(rows, currentIndex, profile);
   const current = rows[currentIndex];
   const previous = rows[currentIndex - 1] ?? current;
   const periodReturns = {};
   for (const [key, period] of Object.entries({ week: 5, month: 20, quarter: 60, year: 250 })) {
     periodReturns[key] = round(pctChange(values, currentIndex, period), 2);
   }
+  const rawSignal = currentSignal ?? scoreAt(rows, currentIndex, profile);
+  const structure = currentStructure ?? classifyTrendStructure(rows, currentIndex, rawSignal, periodReturns);
+  const signal = currentStructure ? currentSignal : reconcileSignalWithStructure(rawSignal, structure);
   return {
     rows,
     current: {
       ...current,
       dailyChange: round(current.dailyChange ?? (current.nav / previous.nav - 1) * 100, 2),
-      periodReturns
+      periodReturns,
+      structure
     },
     signal,
     analogs: calculateAnalogStats(rows, currentIndex, signal.score, 20),
@@ -367,6 +599,8 @@ export function analyzeFund(points, profile = "balanced") {
       indicatorName: "NAV-KDJ",
       note: "场外基金没有日内最高、最低和收盘价，本工具使用滚动净值高低区间计算随机指标，因此不等同于证券标准KDJ。",
       scoreRange: [-100, 100],
+      modelVersion: "multi-horizon-v3",
+      scoreMethod: "长期状态、中期趋势与修复、短期择时、风险约束四层先标准化再加权；结构状态只在多周期证据同时满足时触发",
       profile
     }
   };
@@ -379,4 +613,4 @@ export function sliceByRange(rows, range) {
   return rows.filter((row) => row.timestamp >= cutoff);
 }
 
-export { kdj, rsi, scoreAt, profileThresholds };
+export { classifyTrendStructure, kdj, reconcileSignalWithStructure, rsi, scoreAt, profileThresholds };

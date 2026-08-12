@@ -133,6 +133,123 @@ function pctChange(values, index, periods) {
   return (values[index] / values[index - periods] - 1) * 100;
 }
 
+function crossoverEvent(rows, index, leftKey, rightKey, lookback = 8) {
+  for (let age = 0; age < lookback; age += 1) {
+    const cursor = index - age;
+    if (cursor < 1) break;
+    const currentLeft = rows[cursor]?.[leftKey];
+    const currentRight = rows[cursor]?.[rightKey];
+    const previousLeft = rows[cursor - 1]?.[leftKey];
+    const previousRight = rows[cursor - 1]?.[rightKey];
+    if (![currentLeft, currentRight, previousLeft, previousRight].every(Number.isFinite)) continue;
+    if (currentLeft > currentRight && previousLeft <= previousRight) return { direction: "golden", age, date: rows[cursor].date };
+    if (currentLeft < currentRight && previousLeft >= previousRight) return { direction: "dead", age, date: rows[cursor].date };
+  }
+  return { direction: "none", age: null, date: null };
+}
+
+function horizonState(score, positive, negative, labels) {
+  if (score >= positive) return { state: "positive", label: labels.positive, score: Math.round(score) };
+  if (score <= negative) return { state: "negative", label: labels.negative, score: Math.round(score) };
+  return { state: "neutral", label: labels.neutral, score: Math.round(score) };
+}
+
+function buildDecisionMatrix(rows, index, signal, structure, periodReturns) {
+  const row = rows[index];
+  const previous = rows[Math.max(0, index - 1)] ?? row;
+  const dailyChange = previous.trendNav ? (row.trendNav / previous.trendNav - 1) * 100 : 0;
+  const groups = Object.fromEntries((signal.groups ?? []).map((group) => [group.key, group]));
+  const longScore = (groups.longRegime?.value ?? 0) * 100;
+  const mediumScore = (groups.mediumTrend?.value ?? 0) * 100;
+  const shortScore = (groups.shortTiming?.value ?? 0) * 100;
+  const maCross = crossoverEvent(rows, index, "ma5", "ma10", 8);
+  const mediumCross = crossoverEvent(rows, index, "ma20", "ma60", 15);
+  const macdCross = crossoverEvent(rows, index, "dif", "dea", 8);
+  const kdjCross = crossoverEvent(rows, index, "k", "d", 5);
+  const momentum5 = pctChange(rows.map((item) => item.trendNav), index, 5);
+
+  const short = horizonState(shortScore, 18, -18, { positive: "短期转强", negative: "短期转弱", neutral: "短期震荡" });
+  const medium = horizonState(mediumScore, 18, -22, { positive: "中期改善", negative: "中期走弱", neutral: "中期确认中" });
+  const long = horizonState(longScore, 18, -22, { positive: "长期偏强", negative: "长期偏弱", neutral: "长期震荡" });
+
+  const trendEvidence = [
+    row.trendNav >= row.ma20 ? "净值位于 MA20 上方" : null,
+    row.trendNav >= row.ma60 ? "净值位于 MA60 上方" : null,
+    row.ma20 >= row.ma60 ? "MA20 不低于 MA60" : null,
+    longScore > 10 ? "长期状态为正" : null
+  ].filter(Boolean);
+  const momentumEvidence = [
+    row.ma5 > row.ma10 ? "MA5 高于 MA10" : null,
+    maCross.direction === "golden" ? `MA5/MA10 ${maCross.age === 0 ? "当日" : `${maCross.age}个净值日前`}金叉` : null,
+    row.macdHist > 0 ? "MACD 柱为正" : null,
+    row.macdHist > previous.macdHist ? "MACD 动能改善" : null,
+    row.k > row.d && row.j < 105 ? "KDJ 同向且未严重过热" : null,
+    Number.isFinite(momentum5) && momentum5 > 0 ? "近5日动量为正" : null
+  ].filter(Boolean);
+  const trendPassed = structure.state === "trend" && trendEvidence.length >= 3;
+  const momentumPassed = shortScore >= 12 && momentumEvidence.length >= 3;
+
+  const emergencyReasons = [
+    dailyChange <= -8 ? "单个净值日跌幅达到异常阈值" : null,
+    Number(periodReturns.week) <= -15 ? "近5个净值日快速回撤超过15%" : null,
+    Number(periodReturns.month) <= -25 && Number(row.volatility) >= 55 ? "近20日深跌且波动率急升" : null
+  ].filter(Boolean);
+  const highReasons = [
+    structure.state === "broken" ? "中长期结构已确认破坏" : null,
+    mediumScore <= -25 && longScore <= -20 ? "中期与长期方向同步走弱" : null,
+    row.trendNav < row.ma60 && row.ma20 < row.ma60 && mediumScore < -15 ? "净值与 MA20 位于 MA60 下方且中期强度为负" : null,
+    mediumCross.direction === "dead" && longScore < -10 ? "MA20/MA60 近期死叉且长期状态转弱" : null,
+    Number(row.volatility) >= 70 && Number(periodReturns.month) < 0 ? "极高波动伴随近20日收益为负" : null
+  ].filter(Boolean);
+  const watchReasons = [
+    structure.state === "pullback" ? "短期回调，长期骨架暂完整" : null,
+    structure.state === "repair" ? "低位修复尚未完成中期确认" : null,
+    Number(row.drawdown) <= -25 ? "历史回撤较深，仅作风险背景，不单独否决修复" : null,
+    row.trendNav < row.ma60 && mediumScore >= -15 ? "净值尚未站回 MA60，等待中期确认" : null,
+    Number(row.rsi) >= 74 || Number(row.j) >= 105 ? "短期指标过热" : null,
+    Number(row.volatility) >= 45 ? "波动率处于较高区间" : null
+  ].filter(Boolean);
+  const risk = emergencyReasons.length
+    ? { level: "emergency", label: "紧急避险", reasons: emergencyReasons, blocksEntry: true }
+    : structure.state === "broken" || (longScore <= -10 && highReasons.length >= 2)
+      ? { level: "high", label: "高风险", reasons: highReasons, blocksEntry: true }
+      : watchReasons.length
+        ? { level: "watch", label: "风险关注", reasons: watchReasons, blocksEntry: false }
+        : { level: "normal", label: "常规风险", reasons: ["未触发独立风险门控"], blocksEntry: false };
+
+  const technicalPassed = [trendPassed, momentumPassed].filter(Boolean).length;
+  let setup = "wait";
+  let setupLabel = "等待确认";
+  if (risk.level === "emergency") { setup = "emergency"; setupLabel = "紧急避险"; }
+  else if (risk.level === "high") { setup = "defensive"; setupLabel = "停止新增"; }
+  else if (trendPassed && momentumPassed) { setup = "candidate"; setupLabel = "技术面候选"; }
+  else if (structure.state === "repair" || short.state === "positive") { setup = "watch"; setupLabel = "转强观察"; }
+
+  const nextTriggers = [];
+  if (!trendPassed) nextTriggers.push("净值站稳 MA60，且 MA20 走平向上");
+  if (!momentumPassed) nextTriggers.push("MA5/MA10、MACD 与5日动量至少三项同向");
+  if (risk.level === "watch") nextTriggers.push("过热或波动风险回落后重新验证");
+  if (risk.blocksEntry) nextTriggers.push("风险门控解除后再评估任何新增仓位");
+
+  return {
+    horizon: { short, medium, long },
+    crossovers: { maShort: maCross, maMedium: mediumCross, macd: macdCross, kdj: kdjCross },
+    confirmation: {
+      trend: { passed: trendPassed, label: "趋势结构", evidence: trendEvidence },
+      momentum: { passed: momentumPassed, label: "动能触发", evidence: momentumEvidence },
+      underlying: { passed: null, label: "持仓基本面", evidence: ["需结合最近披露持仓、财报与行业信息"] },
+      passed: technicalPassed,
+      total: 3
+    },
+    risk,
+    setup,
+    setupLabel,
+    nextCheck: nextTriggers[0] ?? "维持当前纪律，并在下一次正式净值更新后复核",
+    nextTriggers,
+    note: "金叉只是一项时点触发；只有趋势、动能和底层持仓验证通过，且风险门控未否决时，才进入分批建仓候选。"
+  };
+}
+
 const profileThresholds = {
   conservative: { attention: 50, reduce: -28 },
   balanced: { attention: 36, reduce: -36 },
@@ -277,41 +394,88 @@ function maxDrawdown(equity) {
   return worst * 100;
 }
 
-function backtest(rows, profile = "balanced", transactionCost = 0.0015) {
+function simulateStrategy(rows, rule, transactionCost = 0.0015) {
   if (rows.length < 90) return null;
-  const threshold = profileThresholds[profile] ?? profileThresholds.balanced;
   let position = 0;
   let strategy = 1;
-  let benchmark = 1;
   let trades = 0;
   let investedDays = 0;
+  let completedTrades = 0;
+  let winningTrades = 0;
+  let entryValue = null;
   const equity = [1];
-  const benchmarkEquity = [1];
-  for (let i = 60; i < rows.length - 1; i += 1) {
-    const score = rows[i].score;
-    let nextPosition = position;
-    if (score >= threshold.attention) nextPosition = 1;
-    if (score <= threshold.reduce) nextPosition = 0;
+  for (let i = 120; i < rows.length - 1; i += 1) {
+    const nextPosition = rule(rows, i, position);
     if (nextPosition !== position) {
       strategy *= 1 - transactionCost;
       trades += 1;
+      if (nextPosition === 1) entryValue = strategy;
+      else if (entryValue != null) {
+        completedTrades += 1;
+        if (strategy > entryValue) winningTrades += 1;
+        entryValue = null;
+      }
     }
     position = nextPosition;
     if (position) investedDays += 1;
     const nextReturn = rows[i + 1].trendNav / rows[i].trendNav - 1;
     strategy *= 1 + position * nextReturn;
-    benchmark *= 1 + nextReturn;
     equity.push(strategy);
-    benchmarkEquity.push(benchmark);
   }
   return {
-    strategyReturn: round((strategy - 1) * 100, 2),
-    benchmarkReturn: round((benchmark - 1) * 100, 2),
-    strategyMaxDrawdown: round(maxDrawdown(equity), 2),
-    benchmarkMaxDrawdown: round(maxDrawdown(benchmarkEquity), 2),
+    return: round((strategy - 1) * 100, 2),
+    maxDrawdown: round(maxDrawdown(equity), 2),
     trades,
-    investedRatio: round(investedDays / Math.max(1, rows.length - 61) * 100, 1),
+    winRate: completedTrades ? round(winningTrades / completedTrades * 100, 1) : null,
+    completedTrades,
+    investedRatio: round(investedDays / Math.max(1, rows.length - 121) * 100, 1),
     transactionCost: transactionCost * 100
+  };
+}
+
+function backtest(rows, profile = "balanced", transactionCost = 0.0015) {
+  if (rows.length < 130) return null;
+  const threshold = profileThresholds[profile] ?? profileThresholds.balanced;
+  const benchmarkStart = rows[120].trendNav;
+  const benchmarkReturn = (rows.at(-1).trendNav / benchmarkStart - 1) * 100;
+  const benchmarkEquity = rows.slice(120).map((row) => row.trendNav / benchmarkStart);
+  const scoreRule = (series, index, position) => {
+    if (series[index].score >= threshold.attention) return 1;
+    if (series[index].score <= threshold.reduce) return 0;
+    return position;
+  };
+  const goldenCrossRule = (series, index, position) => {
+    const current = series[index];
+    const previous = series[index - 1];
+    if (current.ma5 > current.ma10 && previous.ma5 <= previous.ma10) return 1;
+    if (current.ma5 < current.ma10 && previous.ma5 >= previous.ma10) return 0;
+    return position;
+  };
+  const confirmationRule = (series, index, position) => {
+    const decision = series[index].decision;
+    if (decision?.risk?.level === "emergency" || decision?.risk?.level === "high" || series[index].structureState === "broken") return 0;
+    if (decision?.confirmation?.trend?.passed && decision?.confirmation?.momentum?.passed) return 1;
+    if (series[index].ma20 < series[index].ma60 && series[index].macdHist < 0) return 0;
+    return position;
+  };
+  const legacy = simulateStrategy(rows, scoreRule, transactionCost);
+  const goldenCross = simulateStrategy(rows, goldenCrossRule, transactionCost);
+  const threeLayer = simulateStrategy(rows, confirmationRule, transactionCost);
+  return {
+    strategyReturn: threeLayer.return,
+    benchmarkReturn: round(benchmarkReturn, 2),
+    strategyMaxDrawdown: threeLayer.maxDrawdown,
+    benchmarkMaxDrawdown: round(maxDrawdown(benchmarkEquity), 2),
+    trades: threeLayer.trades,
+    investedRatio: threeLayer.investedRatio,
+    transactionCost: transactionCost * 100,
+    methods: {
+      threeLayer: { ...threeLayer, label: "三层技术确认" },
+      goldenCross: { ...goldenCross, label: "单一 MA5/MA10 金叉" },
+      legacyScore: { ...legacy, label: "旧综合分规则" },
+      buyHold: { label: "同期持有", return: round(benchmarkReturn, 2), maxDrawdown: round(maxDrawdown(benchmarkEquity), 2), trades: 1, winRate: null, investedRatio: 100 }
+    },
+    validation: "所有规则仅使用当日及以前数据，信号于下一净值日生效；结果已扣除每次切换0.15%的成本假设。"
   };
 }
 
@@ -569,6 +733,8 @@ export function analyzeFund(points, profile = "balanced") {
     const structure = classifyTrendStructure(rows, index, rawSignal, indexReturns);
     const reconciled = reconcileSignalWithStructure(rawSignal, structure);
     rows[index].score = reconciled.score;
+    rows[index].structureState = structure.state;
+    rows[index].decision = buildDecisionMatrix(rows, index, reconciled, structure, indexReturns);
     if (index === rows.length - 1) {
       currentSignal = reconciled;
       currentStructure = structure;
@@ -584,23 +750,26 @@ export function analyzeFund(points, profile = "balanced") {
   const rawSignal = currentSignal ?? scoreAt(rows, currentIndex, profile);
   const structure = currentStructure ?? classifyTrendStructure(rows, currentIndex, rawSignal, periodReturns);
   const signal = currentStructure ? currentSignal : reconcileSignalWithStructure(rawSignal, structure);
+  const decision = current?.decision ?? buildDecisionMatrix(rows, currentIndex, signal, structure, periodReturns);
   return {
     rows,
     current: {
       ...current,
       dailyChange: round(current.dailyChange ?? (current.nav / previous.nav - 1) * 100, 2),
       periodReturns,
-      structure
+      structure,
+      decision
     },
     signal,
+    decision,
     analogs: calculateAnalogStats(rows, currentIndex, signal.score, 20),
     backtest: backtest(rows, profile),
     methodology: {
       indicatorName: "NAV-KDJ",
       note: "场外基金没有日内最高、最低和收盘价，本工具使用滚动净值高低区间计算随机指标，因此不等同于证券标准KDJ。",
       scoreRange: [-100, 100],
-      modelVersion: "multi-horizon-v3",
-      scoreMethod: "长期状态、中期趋势与修复、短期择时、风险约束四层先标准化再加权；结构状态只在多周期证据同时满足时触发",
+      modelVersion: "multi-horizon-v4",
+      scoreMethod: "长期、中期和短期分别判断；金叉只作动能触发，趋势结构、动能与底层持仓采用三层确认，风险门控拥有独立否决权",
       profile
     }
   };
@@ -613,4 +782,4 @@ export function sliceByRange(rows, range) {
   return rows.filter((row) => row.timestamp >= cutoff);
 }
 
-export { classifyTrendStructure, kdj, reconcileSignalWithStructure, rsi, scoreAt, profileThresholds };
+export { buildDecisionMatrix, classifyTrendStructure, kdj, reconcileSignalWithStructure, rsi, scoreAt, profileThresholds };

@@ -22,13 +22,29 @@ export function decidePortfolioAction({
   hasHolding,
   targetPct,
   dataQuality,
-  lagBusinessDays
+  lagBusinessDays,
+  decision
 }) {
   const target = normalizeTarget(targetPct);
   const reliable = dataQuality === "verified" && Number(lagBusinessDays || 0) === 0;
-  if (!reliable) return { state: "wait", label: "等待确认", priority: 1, detail: "正式净值尚未完成双源校验，本次只展示风险信息，不生成交易建议" };
+  const riskLevel = decision?.risk?.level ?? (structureState === "broken" ? "high" : "normal");
+  const technicalConfirmations = Number(decision?.confirmation?.passed ?? 0);
+  const underlyingPassed = decision?.confirmation?.underlying?.passed;
+  const nextCheck = decision?.nextCheck || "等待下一次正式净值更新后复核";
+
+  if (riskLevel === "emergency") {
+    return hasHolding
+      ? { state: "emergency", label: "紧急避险", priority: 7, detail: `独立风险门控已触发：${decision.risk.reasons.join("；")}。先核对是否存在分红、巨额赎回或数据异常，再结合赎回限制尽快降低暴露` }
+      : { state: "avoid", label: "暂不介入", priority: 7, detail: `独立风险门控已触发：${decision.risk.reasons.join("；")}。风险解除前不研究新增仓位` };
+  }
+  if (!reliable) return { state: "wait", label: "等待净值确认", priority: 1, detail: "正式净值尚未完成双源校验，本次只展示风险信息，不生成新增仓位建议" };
   if (technicalLabel === "样本不足") return { state: "wait", label: "等待确认", priority: 1, detail: "历史净值少于120个净值日，趋势样本不足，暂不生成交易建议" };
-  if (structureState === "broken") return { state: "sell", label: "风险退出", priority: 5, detail: "净值与中长期均线已构成趋势破坏，停止新增仓位；结合赎回费用、持有期限和替代方案分批降低风险" };
+
+  if (riskLevel === "high" || structureState === "broken") {
+    return hasHolding
+      ? { state: "reduce", label: "降低仓位", priority: 6, detail: `中长期风险门控已触发：${decision?.risk?.reasons?.join("；") || "趋势结构破坏"}。停止加仓，并结合持有期限、赎回费和替代方案分批降低风险` }
+      : { state: "avoid", label: "暂不介入", priority: 6, detail: "中长期风险门控已触发，停止研究新增仓位，等待结构修复" };
+  }
 
   if (finite(holdingReturnPct) && Number(holdingReturnPct) >= target) {
     return {
@@ -41,7 +57,9 @@ export function decidePortfolioAction({
 
   const exitLine = finite(reduceThreshold) ? Number(reduceThreshold) : -35;
   if (technicalState === "risk" || Number(compositeScore) <= exitLine) {
-    return { state: "sell", label: "风险退出", priority: 4, detail: "20至120日趋势和动能达到防守阈值，执行前需核对赎回费、持有期限及组合替代方案" };
+    return hasHolding
+      ? { state: "reduce", label: "暂停加仓", priority: 4, detail: "20至120日趋势和动能进入防守区，但尚未触发紧急门控；保留观察仓位并核对赎回费与持有期限" }
+      : { state: "avoid", label: "暂不介入", priority: 4, detail: "20至120日趋势和动能进入防守区，等待修复后再评估" };
   }
 
   const entryLine = finite(attentionThreshold) ? Number(attentionThreshold) : 40;
@@ -52,9 +70,23 @@ export function decidePortfolioAction({
     && Number(confidence) >= 70
     && (!structureState || structureState === "trend")
     && fundamentalsPass
-    && riskPass;
+    && riskPass
+    && technicalConfirmations >= 2
+    && underlyingPassed === true;
   if (entryPass) {
-    return { state: "base", label: "分批建仓", priority: 3, detail: `正式净值已校验，趋势阈值通过，有效指标同向率 ${Number(confidence).toFixed(0)}%，基本面与风险过滤未触发否决；建议按计划分批执行` };
+    return hasHolding
+      ? { state: "hold", label: "持有并按计划加仓", priority: 3, detail: `趋势结构、动能触发和底层持仓三层确认通过，风险门控正常；只按预设批次执行，下一检查：${nextCheck}` }
+      : { state: "base", label: "分批建仓候选", priority: 3, detail: `趋势结构、动能触发和底层持仓三层确认通过，风险门控正常；建议分2至4批执行，下一检查：${nextCheck}` };
+  }
+
+  const trialPass = technicalState === "candidate"
+    && technicalConfirmations >= 2
+    && underlyingPassed == null
+    && Number(compositeScore) >= entryLine
+    && Number(confidence) >= 70
+    && riskPass;
+  if (trialPass && !hasHolding) {
+    return { state: "trial", label: "小额试仓候选", priority: 2, detail: `趋势与动能已确认，但最近披露持仓或财务覆盖不足，不能视为完整三层通过；仅可用计划仓位的小比例验证，下一检查：${nextCheck}` };
   }
 
   if (hasHolding && Number(compositeScore) > exitLine) {
@@ -63,7 +95,8 @@ export function decidePortfolioAction({
       : structureState === "repair"
         ? "短期与中期修复证据正在增加，但反转尚未确认；已有持仓继续观察 MA20 拐头、MA60 位置和波动收敛"
         : "尚未达到新增仓位或退出阈值，已有持仓继续观察长期骨架、中期动量与回撤变化";
-    return { state: "hold", label: "持有观察", priority: 2, detail };
+    const label = structureState === "pullback" ? "持有，暂停加仓" : "持有观察";
+    return { state: "hold", label, priority: 2, detail: `${detail}；下一检查：${nextCheck}` };
   }
 
   const reason = structureState === "pullback"
@@ -71,5 +104,5 @@ export function decidePortfolioAction({
     : structureState === "repair"
       ? "修复证据正在形成，但尚未完成中期反转；等待 MA20 拐头并重新站回 MA60 后再研究分批建仓"
       : Number(score) < 0 ? "中长期趋势仍偏弱，等待均线结构和60日动量修复" : "指标尚未形成足够一致性，等待正式净值后的下一次确认";
-  return { state: "wait", label: "等待确认", priority: 1, detail: reason };
+  return { state: "wait", label: "自选等待确认", priority: 1, detail: `${reason}；下一检查：${nextCheck}` };
 }

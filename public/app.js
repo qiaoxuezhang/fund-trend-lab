@@ -295,6 +295,14 @@ function compositeFor(item) {
   const compositeScore = usable ? Math.round(item.signal.score * 0.75 + research.fundamentalScore * 0.25) : item.signal.score;
   const holding = holdingSnapshot(item);
   const targetPct = takeProfitTargetFor(item.code);
+  const decision = item.decision ? structuredClone(item.decision) : null;
+  if (decision?.confirmation?.underlying) {
+    decision.confirmation.underlying.passed = usable ? research.fundamentalScore >= -10 : null;
+    decision.confirmation.underlying.evidence = usable
+      ? [`最近披露持仓研究覆盖 ${research.coverage.toFixed(0)}%`, `持仓基本面分 ${research.fundamentalScore > 0 ? "+" : ""}${research.fundamentalScore}`]
+      : ["最近披露持仓或财务覆盖不足，第三层暂不计为通过"];
+    decision.confirmation.passed = Number(decision.confirmation.trend?.passed) + Number(decision.confirmation.momentum?.passed) + Number(decision.confirmation.underlying.passed === true);
+  }
   const entry = decidePortfolioAction({
     technicalState: item.entry?.state,
     technicalLabel: item.entry?.label,
@@ -312,9 +320,10 @@ function compositeFor(item) {
     hasHolding: Boolean(holding),
     targetPct,
     dataQuality: item.data?.quality,
-    lagBusinessDays: item.data?.lagBusinessDays
+    lagBusinessDays: item.data?.lagBusinessDays,
+    decision
   });
-  return { research, compositeScore, entry, usable, holding, targetPct };
+  return { research, compositeScore, entry, usable, holding, targetPct, decision };
 }
 
 function qualityLabel(item) {
@@ -350,7 +359,12 @@ function renderPortfolioRows() {
     const holding = state.portfolio.find((fund) => fund.code === item.code);
     const derived = compositeFor(item);
     const groupMatches = state.portfolioGroup === "all" || holding?.userGroup === state.portfolioGroup;
-    const statusMatches = state.portfolioFilter === "all" || derived.entry?.state === state.portfolioFilter;
+    const entryStates = new Set(["base", "trial"]);
+    const defenseStates = new Set(["avoid", "reduce", "emergency", "sell"]);
+    const statusMatches = state.portfolioFilter === "all"
+      || derived.entry?.state === state.portfolioFilter
+      || (state.portfolioFilter === "entry" && entryStates.has(derived.entry?.state))
+      || (state.portfolioFilter === "defense" && defenseStates.has(derived.entry?.state));
     return groupMatches && statusMatches;
   });
   filtered.sort((left, right) => {
@@ -378,7 +392,7 @@ function renderPortfolioRows() {
       <td><div class="fund-cell"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${item.code} · ${tagLabel}</span><select class="inline-group-select" data-group-code="${item.code}" aria-label="${escapeHtml(item.name)}关注分组">${groupOptions}</select></div></td>
       <td><div class="holding-cell"><strong>${formatNumber(item.current.nav)}</strong><span>${item.current.date} · ${quality.label}</span><small class="${signedClass(item.current.dailyChange)}">${formatPct(item.current.dailyChange)}</small></div></td>
       <td><div class="holding-cell"><strong class="${signedClass(holding?.returnPct)}">${formatPct(holding?.returnPct)}</strong><span>${holding?.currentValue != null ? formatMoney(holding.currentValue) : "未设置持仓成本"}</span><small>止盈目标 ${derived.targetPct.toFixed(1)}%</small></div></td>
-      <td><div class="composite-cell"><span class="score-chip ${scoreClass}" title="结构校准后的综合分，范围 -10.0 至 +10.0">${formatTrendLevel(derived.compositeScore)}</span><small>模型 ${formatTrendLevel(item.signal.score)}${derived.usable ? ` · 基本面 ${derived.research.fundamentalScore > 0 ? "+" : ""}${derived.research.fundamentalScore}` : ""}</small></div></td>
+      <td><div class="cycle-cell"><span><b class="cycle-state ${derived.decision?.horizon?.short?.state || "neutral"}">${escapeHtml(derived.decision?.horizon?.short?.label || "短期待确认")}</b><b class="cycle-state ${derived.decision?.horizon?.long?.state || "neutral"}">${escapeHtml(derived.decision?.horizon?.long?.label || "长期待确认")}</b></span><small>${derived.decision?.confirmation?.passed ?? 0}/3层确认 · <b class="risk-level-text ${derived.decision?.risk?.level || "normal"}">${escapeHtml(derived.decision?.risk?.label || "常规风险")}</b></small></div></td>
       <td><div class="action-cell"><span class="action-chip-row"><span class="entry-chip ${derived.entry.state}" title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(derived.entry.label)}</span><span class="structure-chip ${item.current?.structure?.state || "mixed"}" title="${escapeHtml(item.current?.structure?.detail || "等待均线结构确认")}">${escapeHtml(item.current?.structure?.label || "结构待确认")}</span></span><small title="${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}">${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}</small></div></td>
       <td><button class="icon-button small row-action" data-open-code="${item.code}" title="查看单基分析" aria-label="查看${escapeHtml(item.name)}分析"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></td>
     </tr>`;
@@ -613,7 +627,7 @@ async function refreshMarketOpportunities() {
 }
 
 function notifyActionChanges(items) {
-  const actionable = new Set(["base", "take-profit", "sell"]);
+  const actionable = new Set(["base", "trial", "take-profit", "reduce", "avoid", "emergency"]);
   const current = items.filter((item) => actionable.has(item.entry?.state) && item.data?.quality === "verified" && item.data?.lagBusinessDays === 0).map((item) => `${item.code}:${item.entry.state}`);
   const stored = localStorage.getItem("fund-last-actions-v2");
   if (stored == null) {
@@ -644,11 +658,11 @@ function renderPortfolio(payload) {
   setText("#portfolioValue", formatMoney(currentValue));
   setText("#portfolioProfit", valid.length ? `估算持有收益 ${profit >= 0 ? "+" : ""}${formatMoney(profit)} · ${formatPct(cost ? profit / cost * 100 : null)}` : "本机数据为空，不会显示其他用户的组合");
   $("#portfolioProfit").className = signedClass(profit);
-  setText("#baseCount", derivedItems.filter(({ derived }) => derived.entry.state === "base").length);
+  setText("#baseCount", derivedItems.filter(({ derived }) => ["base", "trial"].includes(derived.entry.state)).length);
   setText("#holdCount", derivedItems.filter(({ derived }) => derived.entry.state === "hold").length);
   setText("#waitCount", derivedItems.filter(({ derived }) => derived.entry.state === "wait").length);
   setText("#takeProfitCount", derivedItems.filter(({ derived }) => derived.entry.state === "take-profit").length);
-  setText("#sellCount", derivedItems.filter(({ derived }) => derived.entry.state === "sell").length);
+  setText("#sellCount", derivedItems.filter(({ derived }) => ["avoid", "reduce", "emergency", "sell"].includes(derived.entry.state)).length);
   setText("#defaultTargetLabel", `${state.strategySettings.defaultTakeProfitPct.toFixed(0)}%`);
   setText("#marketStatus", payload.market.label);
   const verified = valid.filter((item) => item.data.quality === "verified" && item.data.lagBusinessDays === 0).length;
@@ -1196,6 +1210,47 @@ function renderSignal(signal, analogs, structure) {
   }
 }
 
+function confirmationText(group) {
+  if (group?.passed === true) return { state: "passed", label: "已通过", detail: group.evidence?.join(" · ") || "证据通过" };
+  if (group?.passed === false) return { state: "failed", label: "未通过", detail: group.evidence?.join(" · ") || "证据未达到阈值" };
+  return { state: "pending", label: "待核验", detail: group?.evidence?.join(" · ") || "数据覆盖不足" };
+}
+
+function renderDecisionMatrix(decision) {
+  if (!decision) return;
+  setText("#decisionSetup", decision.setupLabel);
+  setText("#decisionNextCheck", `下一检查：${decision.nextCheck}`);
+  for (const [key, selector] of [["short", "short"], ["medium", "medium"], ["long", "long"]]) {
+    const horizon = decision.horizon?.[key];
+    setText(`#${selector}HorizonLabel`, horizon?.label || "待确认");
+    setText(`#${selector}HorizonScore`, horizon ? `独立强度 ${horizon.score > 0 ? "+" : ""}${horizon.score}` : "--");
+    $(`#${selector}Horizon`).dataset.state = horizon?.state || "neutral";
+  }
+  setText("#decisionRiskLabel", decision.risk?.label || "常规风险");
+  setText("#decisionRiskReasons", decision.risk?.reasons?.join(" · ") || "未触发独立风险门控");
+  $("#decisionRisk").dataset.risk = decision.risk?.level || "normal";
+  for (const [key, labelSelector, copySelector] of [
+    ["trend", "#trendConfirmation", "#trendConfirmationCopy"],
+    ["momentum", "#momentumConfirmation", "#momentumConfirmationCopy"],
+    ["underlying", "#underlyingConfirmation", "#underlyingConfirmationCopy"]
+  ]) {
+    const result = confirmationText(decision.confirmation?.[key]);
+    setText(labelSelector, `${decision.confirmation?.[key]?.label || "证据层"} · ${result.label}`);
+    setText(copySelector, result.detail);
+    $(labelSelector).parentElement.dataset.confirmation = result.state;
+  }
+  const crossLabel = (label, event) => event?.direction === "golden"
+    ? `${label}金叉${event.age ? `（${event.age}日内）` : "（最新）"}`
+    : event?.direction === "dead" ? `${label}死叉${event.age ? `（${event.age}日内）` : "（最新）"}` : null;
+  const crosses = [
+    crossLabel("MA5/MA10 ", decision.crossovers?.maShort),
+    crossLabel("MA20/MA60 ", decision.crossovers?.maMedium),
+    crossLabel("MACD ", decision.crossovers?.macd),
+    crossLabel("KDJ ", decision.crossovers?.kdj)
+  ].filter(Boolean);
+  setText("#crossoverSummary", crosses.length ? crosses.join(" · ") : "近期未出现新的关键金叉或死叉，按当前多周期结构继续观察");
+}
+
 function renderFactors(factors) {
   setText("#factorCount", `${factors.length} 项`);
   $("#factorList").innerHTML = factors.map((factor) => `
@@ -1218,6 +1273,10 @@ function renderBacktest(backtest) {
   setText("#investedRatio", `${backtest.investedRatio.toFixed(1)}%`);
   setText("#transactionCost", `${backtest.transactionCost.toFixed(2)}%`);
   setText("#backtestRange", { "3m": "近3个月", "6m": "近6个月", "1y": "近1年", "3y": "近3年", all: "全部历史" }[state.range]);
+  const methods = backtest.methods ?? {};
+  $("#strategyComparison").innerHTML = [methods.threeLayer, methods.goldenCross, methods.legacyScore, methods.buyHold].filter(Boolean).map((method) => `
+    <div><span>${escapeHtml(method.label)}</span><strong class="${signedClass(method.return)}">${formatPct(method.return)}</strong><small>回撤 ${formatPct(method.maxDrawdown)} · ${method.trades ?? 0}次切换${method.winRate == null ? "" : ` · 完整交易胜率 ${method.winRate.toFixed(1)}%`}</small></div>`).join("");
+  setText("#backtestValidation", `${backtest.validation} 结果仅检查规则稳定性，不代表未来收益。`);
 }
 
 function formatLargeNumber(value) {
@@ -1246,6 +1305,17 @@ function renderFundResearch(research) {
   const trendScore = state.payload?.analysis?.signal?.score ?? 0;
   const composite = research.fundamentalScore == null ? trendScore : Math.round(trendScore * .75 + research.fundamentalScore * .25);
   setText("#researchConclusion", `${tone.label} · 结构与基本面综合分 ${formatTrendLevel(composite)}`);
+  if (state.payload?.analysis?.decision?.confirmation?.underlying) {
+    const decision = structuredClone(state.payload.analysis.decision);
+    const usable = research.fundamentalScore != null && research.coverage >= 15;
+    decision.confirmation.underlying.passed = usable ? research.fundamentalScore >= -10 : null;
+    decision.confirmation.underlying.evidence = usable
+      ? [`最近披露持仓研究覆盖 ${research.coverage.toFixed(0)}%`, `持仓基本面分 ${research.fundamentalScore > 0 ? "+" : ""}${research.fundamentalScore}`]
+      : ["持仓披露或财务覆盖不足，第三层暂不计为通过"];
+    decision.confirmation.passed = Number(decision.confirmation.trend?.passed) + Number(decision.confirmation.momentum?.passed) + Number(decision.confirmation.underlying.passed === true);
+    state.payload.analysis.decision = decision;
+    renderDecisionMatrix(decision);
+  }
 
   $("#holdingsRows").innerHTML = research.topHoldings.length ? research.topHoldings.map((stock) => {
     const companyScore = stock.research?.score;
@@ -1334,6 +1404,7 @@ function renderPayload(payload) {
   setText("#macdValues", `DIF ${formatNumber(current.dif, 4)} · DEA ${formatNumber(current.dea, 4)}`);
   setText("#rsiValue", formatNumber(current.rsi, 1));
   renderSignal(signal, analogs, current.structure);
+  renderDecisionMatrix(analysis.decision || current.decision);
   renderFactors(signal.factors);
   renderBacktest(analysis.backtest);
   state.charts.forEach((chart) => chart.setData(rows));

@@ -113,11 +113,11 @@
             <small id="portfolioProfit">依据截图金额建立，待官方净值校准</small>
           </div>
           <div class="action-summary" aria-label="当前动作统计">
-            <button data-summary-action="base"><span>分批建仓</span><strong id="baseCount">--</strong></button>
+            <button data-summary-action="entry"><span>建仓候选</span><strong id="baseCount">--</strong></button>
             <button data-summary-action="hold"><span>持有观察</span><strong id="holdCount">--</strong></button>
             <button data-summary-action="wait"><span>等待确认</span><strong id="waitCount">--</strong></button>
             <button data-summary-action="take-profit"><span>分批止盈</span><strong id="takeProfitCount">--</strong></button>
-            <button data-summary-action="sell"><span>风险退出</span><strong id="sellCount">--</strong></button>
+            <button data-summary-action="defense"><span>风险动作</span><strong id="sellCount">--</strong></button>
           </div>
           <div class="target-summary"><span>默认止盈目标</span><strong id="defaultTargetLabel">20%</strong><button class="target-settings-link" id="targetSettingsButton" type="button">设置目标</button></div>
           <div class="refresh-summary"><span>低频检查</span><strong id="refreshCountdown">--:--</strong><small id="marketStatus">读取市场状态</small></div>
@@ -169,11 +169,11 @@
             </button>
             <div class="segmented" id="portfolioFilter">
               <button class="active" data-filter="all">全部状态</button>
-              <button data-filter="base">分批建仓</button>
+              <button data-filter="entry">建仓候选</button>
               <button data-filter="hold">持有观察</button>
               <button data-filter="wait">等待确认</button>
               <button data-filter="take-profit">分批止盈</button>
-              <button data-filter="sell">风险退出</button>
+              <button data-filter="defense">风险动作</button>
             </div>
           </div>
           <div class="portfolio-updated"><i></i><span id="portfolioUpdated">正在读取组合数据</span></div>
@@ -181,7 +181,7 @@
 
         <div class="portfolio-table-wrap">
           <table class="portfolio-table">
-            <thead><tr><th>基金</th><th>官方净值</th><th>持有收益</th><th>结构校准分</th><th>当前动作</th><th></th></tr></thead>
+            <thead><tr><th>基金</th><th>官方净值</th><th>持有收益</th><th>多周期判断</th><th>当前动作</th><th></th></tr></thead>
             <tbody id="portfolioRows"></tbody>
           </table>
           <div class="portfolio-empty" id="portfolioEmpty" hidden>当前筛选条件下没有基金</div>
@@ -236,6 +236,25 @@
         <div><p id="trendStructureDetail">正在区分短期回调、修复过程与中长期趋势破坏。</p><small id="trendStructureEvidence">等待均线与动量证据</small></div>
         <div class="repair-power-block"><span>修复动力</span><strong><b id="repairPowerValue">--</b><small id="repairPowerLabel">证据分</small></strong><p id="repairPowerWarning">仅衡量修复证据，不代表上涨概率</p></div>
         <div class="trend-structure-advice"><span>风险动作</span><strong id="trendStructureAdvice">等待结构确认</strong></div>
+      </section>
+
+      <section class="decision-matrix-band" aria-labelledby="decisionMatrixTitle">
+        <div class="decision-matrix-heading">
+          <div><span class="eyebrow">买入、持有与风险的独立证据</span><h2 id="decisionMatrixTitle">多周期决策台</h2></div>
+          <div class="decision-setup"><span>当前技术形态</span><strong id="decisionSetup">计算中</strong><small id="decisionNextCheck">等待下一触发条件</small></div>
+        </div>
+        <div class="horizon-grid">
+          <div class="horizon-item" id="shortHorizon"><span>短期 · 5至20日</span><strong id="shortHorizonLabel">--</strong><small id="shortHorizonScore">--</small></div>
+          <div class="horizon-item" id="mediumHorizon"><span>中期 · 20至60日</span><strong id="mediumHorizonLabel">--</strong><small id="mediumHorizonScore">--</small></div>
+          <div class="horizon-item" id="longHorizon"><span>中长期 · 60至120日</span><strong id="longHorizonLabel">--</strong><small id="longHorizonScore">--</small></div>
+          <div class="horizon-item risk-horizon" id="decisionRisk"><span>独立风险门控</span><strong id="decisionRiskLabel">--</strong><small id="decisionRiskReasons">--</small></div>
+        </div>
+        <div class="confirmation-grid" id="confirmationGrid">
+          <div><span>第一层</span><strong id="trendConfirmation">趋势结构</strong><small id="trendConfirmationCopy">等待计算</small></div>
+          <div><span>第二层</span><strong id="momentumConfirmation">动能触发</strong><small id="momentumConfirmationCopy">等待计算</small></div>
+          <div><span>第三层</span><strong id="underlyingConfirmation">持仓基本面</strong><small id="underlyingConfirmationCopy">进入组合后核验</small></div>
+        </div>
+        <div class="crossover-strip"><span>交叉事件</span><strong id="crossoverSummary">等待 MA、MACD 与 KDJ 事件识别</strong><small>金叉只作触发，不单独构成买入依据；场外基金信号在正式净值确认后评估。</small></div>
       </section>
 
       <section class="toolbar-band">
@@ -355,15 +374,16 @@
             <span class="subtle-badge" id="backtestRange">当前区间</span>
           </div>
           <div class="backtest-comparison">
-            <div><span>信号策略</span><strong id="strategyReturn">--</strong><small id="strategyDrawdown">最大回撤 --</small></div>
+            <div><span>三层技术确认</span><strong id="strategyReturn">--</strong><small id="strategyDrawdown">最大回撤 --</small></div>
             <div><span>同期持有</span><strong id="benchmarkReturn">--</strong><small id="benchmarkDrawdown">最大回撤 --</small></div>
           </div>
+          <div class="strategy-comparison" id="strategyComparison"></div>
           <div class="backtest-meta">
             <div><span>调仓次数</span><strong id="tradeCount">--</strong></div>
             <div><span>在场比例</span><strong id="investedRatio">--</strong></div>
             <div><span>单次成本假设</span><strong id="transactionCost">--</strong></div>
           </div>
-          <p class="backtest-note">信号在当日净值确认后，于下一净值日生效。结果仅用于检查规则稳定性，未计入每只基金不同的申赎确认日、持有期费率和限购规则。</p>
+          <p class="backtest-note" id="backtestValidation">信号在当日净值确认后，于下一净值日生效。结果仅用于检查规则稳定性，未计入每只基金不同的申赎确认日、持有期费率和限购规则。</p>
         </div>
       </section>
 

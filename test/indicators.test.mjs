@@ -67,6 +67,8 @@ test("deep drawdown alone does not turn a low-position recovery into a broken tr
   assert.ok(analysis.current.trendNav < analysis.current.ma60);
   assert.ok(analysis.current.ma60 > analysis.current.ma120);
   assert.match(analysis.signal.signal, /低位修复/);
+  assert.notEqual(analysis.decision.risk.level, "high");
+  assert.notEqual(analysis.decision.risk.level, "emergency");
 });
 
 test("repair power is an evidence score with explicit heat warnings", () => {
@@ -175,9 +177,10 @@ test("portfolio strategy prioritizes customer take-profit targets", () => {
 
 test("portfolio strategy separates build, hold and exit signals", () => {
   const shared = { score: 55, compositeScore: 55, confidence: 75, attentionThreshold: 40, reduceThreshold: -40, fundamentalScore: 12, fundamentalUsable: true, drawdown: -12, volatility: 40, targetPct: 20, dataQuality: "verified", lagBusinessDays: 0 };
-  assert.equal(decidePortfolioAction({ ...shared, technicalState: "candidate" }).state, "base");
+  const confirmed = { confirmation: { trend: { passed: true }, momentum: { passed: true }, underlying: { passed: true }, passed: 3 }, risk: { level: "normal", reasons: [] } };
+  assert.equal(decidePortfolioAction({ ...shared, technicalState: "candidate", structureState: "trend", decision: confirmed }).state, "base");
   assert.equal(decidePortfolioAction({ ...shared, technicalState: "watch", compositeScore: 30, confidence: 60, hasHolding: true }).state, "hold");
-  assert.equal(decidePortfolioAction({ ...shared, technicalState: "risk", compositeScore: -45 }).state, "sell");
+  assert.equal(decidePortfolioAction({ ...shared, technicalState: "risk", compositeScore: -45 }).state, "avoid");
   assert.equal(decidePortfolioAction({ ...shared, technicalState: "candidate", confidence: 69 }).state, "wait");
 });
 
@@ -185,7 +188,72 @@ test("portfolio strategy treats pullbacks differently from broken trends", () =>
   const shared = { technicalState: "candidate", score: 55, compositeScore: 55, confidence: 78, attentionThreshold: 40, reduceThreshold: -40, targetPct: 20, dataQuality: "verified", lagBusinessDays: 0 };
   assert.equal(decidePortfolioAction({ ...shared, structureState: "pullback" }).state, "wait");
   assert.equal(decidePortfolioAction({ ...shared, structureState: "pullback", hasHolding: true }).state, "hold");
-  assert.equal(decidePortfolioAction({ ...shared, structureState: "broken", hasHolding: true }).state, "sell");
+  assert.equal(decidePortfolioAction({ ...shared, structureState: "broken", hasHolding: true }).state, "reduce");
+});
+
+test("a single golden cross is only a timing trigger, not a build signal", () => {
+  const analysis = analyzeFund(lowPositionRecoveryPoints(), "balanced");
+  assert.notEqual(analysis.decision.confirmation.trend.passed && analysis.decision.confirmation.momentum.passed, true);
+  const action = decidePortfolioAction({
+    technicalState: "candidate",
+    score: 45,
+    compositeScore: 45,
+    confidence: 75,
+    attentionThreshold: 36,
+    reduceThreshold: -36,
+    structureState: "repair",
+    dataQuality: "verified",
+    lagBusinessDays: 0,
+    decision: analysis.decision
+  });
+  assert.notEqual(action.state, "base");
+});
+
+test("three-layer confirmation is required for a full build candidate", () => {
+  const decision = {
+    confirmation: {
+      trend: { passed: true }, momentum: { passed: true }, underlying: { passed: true }, passed: 3
+    },
+    risk: { level: "normal", reasons: [] },
+    nextCheck: "下一净值日复核"
+  };
+  const shared = { technicalState: "candidate", score: 55, compositeScore: 55, confidence: 78, attentionThreshold: 36, reduceThreshold: -36, structureState: "trend", dataQuality: "verified", lagBusinessDays: 0, decision };
+  assert.equal(decidePortfolioAction(shared).state, "base");
+  decision.confirmation.underlying.passed = null;
+  decision.confirmation.passed = 2;
+  assert.equal(decidePortfolioAction(shared).state, "trial");
+});
+
+test("emergency risk overrides take-profit and all positive signals", () => {
+  const decision = { confirmation: { passed: 3, underlying: { passed: true } }, risk: { level: "emergency", reasons: ["近5个净值日快速回撤超过15%"] } };
+  const action = decidePortfolioAction({ technicalState: "candidate", score: 80, compositeScore: 80, confidence: 90, attentionThreshold: 36, reduceThreshold: -36, structureState: "trend", holdingReturnPct: 30, hasHolding: true, targetPct: 20, dataQuality: "verified", lagBusinessDays: 0, decision });
+  assert.equal(action.state, "emergency");
+});
+
+test("watchlist and holding receive different defensive actions", () => {
+  const decision = { confirmation: { passed: 0, underlying: { passed: false } }, risk: { level: "high", reasons: ["中长期结构已确认破坏"] } };
+  const shared = { technicalState: "risk", score: -50, compositeScore: -50, confidence: 80, attentionThreshold: 36, reduceThreshold: -36, structureState: "broken", dataQuality: "verified", lagBusinessDays: 0, decision };
+  assert.equal(decidePortfolioAction(shared).state, "avoid");
+  assert.equal(decidePortfolioAction({ ...shared, hasHolding: true }).state, "reduce");
+});
+
+test("multi-strategy backtest reports golden-cross and three-layer comparisons", () => {
+  const analysis = analyzeFund(samplePoints(420, 1), "balanced");
+  assert.ok(analysis.backtest.methods.goldenCross);
+  assert.ok(analysis.backtest.methods.threeLayer);
+  assert.ok(analysis.backtest.methods.buyHold);
+  assert.match(analysis.backtest.validation, /下一净值日生效/);
+});
+
+test("historical decisions do not change when future NAV data is appended", () => {
+  const base = samplePoints(300, 1);
+  const extended = [...base, ...samplePoints(60, -1).map((point, index) => ({ ...point, timestamp: base.at(-1).timestamp + (index + 1) * 24 * 60 * 60 * 1000, nav: base.at(-1).nav - index * 0.003 }))];
+  const baseAnalysis = analyzeFund(base, "balanced");
+  const extendedAnalysis = analyzeFund(extended, "balanced");
+  const historical = extendedAnalysis.rows[base.length - 1];
+  assert.equal(historical.score, baseAnalysis.rows.at(-1).score);
+  assert.equal(historical.decision.setup, baseAnalysis.rows.at(-1).decision.setup);
+  assert.equal(historical.decision.risk.level, baseAnalysis.rows.at(-1).decision.risk.level);
 });
 
 test("encrypted vault round-trips private portfolio data", async () => {

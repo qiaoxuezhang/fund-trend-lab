@@ -322,21 +322,16 @@ function marketStatus() {
 }
 
 function assessEntry(analysis) {
-  const { current, signal } = analysis;
+  const { current, signal, decision } = analysis;
   if (analysis.rows.length < 120) return { state: "neutral", label: "样本不足", priority: 1, detail: "历史净值少于120个净值日，暂不触发中长期入仓信号" };
-  if (current.structure?.state === "broken") return { state: "risk", label: "趋势破坏", priority: 5, detail: current.structure.advice };
+  if (decision?.risk?.level === "emergency") return { state: "risk", label: "紧急风险", priority: 7, detail: decision.risk.reasons.join("；") };
+  if (decision?.risk?.level === "high" || current.structure?.state === "broken") return { state: "risk", label: "高风险防守", priority: 6, detail: decision?.risk?.reasons?.join("；") || current.structure.advice };
   if (current.structure?.state === "pullback") return { state: "watch", label: "短期回调", priority: 3, detail: current.structure.advice };
   if (["repair", "mixed"].includes(current.structure?.state)) return { state: "watch", label: current.structure.label, priority: 2, detail: current.structure.advice };
-  const confirmations = [
-    current.trendNav > current.ma20,
-    current.k > current.d,
-    current.macdHist > 0,
-    current.rsi >= 45 && current.rsi < 73
-  ].filter(Boolean).length;
-  if (current.structure?.state === "trend" && signal.score >= signal.threshold.attention && signal.confidence >= 70 && confirmations >= 3) {
-    return { state: "candidate", label: "可分批建仓", priority: 4, detail: `上行结构已确认，长期状态、中期趋势和短期择时的一致性为 ${signal.confidence}%` };
+  if (decision?.confirmation?.trend?.passed && decision?.confirmation?.momentum?.passed && signal.score >= signal.threshold.attention && signal.confidence >= 70) {
+    return { state: "candidate", label: "技术面候选", priority: 4, detail: `趋势结构与动能触发已通过，仍需底层持仓和基本面完成第三层验证；金叉不单独构成买入建议` };
   }
-  if (signal.score >= signal.threshold.attention - 14 && signal.confidence >= 55 && confirmations >= 2) {
+  if (signal.score >= signal.threshold.attention - 14 && signal.confidence >= 55 && decision?.confirmation?.passed >= 1) {
     return { state: "watch", label: "转强观察", priority: 3, detail: "中长期趋势正在改善，但还未达到建仓阈值" };
   }
   if (signal.score <= signal.threshold.reduce) {
@@ -393,6 +388,7 @@ async function buildPortfolio(codes, profile) {
           model: analysis.signal.model,
           threshold: analysis.signal.threshold
         },
+        decision: analysis.decision,
         entry,
         data: {
           quality,

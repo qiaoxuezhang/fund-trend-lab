@@ -654,6 +654,9 @@ const server = http.createServer(async (request, response) => {
   try {
     applySecurityHeaders(response);
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname === "/api/health") {
+      return json(response, 200, { ok: true, time: new Date().toISOString() });
+    }
     if (url.pathname.startsWith("/api/auth/")) {
       const authLimit = url.pathname === "/api/auth/login"
         ? { limit: 10, windowMs: 15 * 60_000, scope: "auth-login" }
@@ -669,7 +672,7 @@ const server = http.createServer(async (request, response) => {
       return response.end("Method not allowed");
     }
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname !== "/api/health" && rateLimit(request, response)) return;
+      if (rateLimit(request, response)) return;
       return await handleApi(request, response, url);
     }
     if (!["GET", "HEAD"].includes(request.method)) {

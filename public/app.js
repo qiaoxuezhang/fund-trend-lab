@@ -94,8 +94,16 @@ const state = {
   searchTimer: null,
   activeCompanyCode: null,
   strategyFundCode: null,
-  installPrompt: null
+  installPrompt: null,
+  fundDetailCache: new Map(),
+  fundResearchCache: new Map(),
+  fundDetailRequests: new Map(),
+  fundResearchRequests: new Map(),
+  detailLoadSequence: 0
 };
+
+const DETAIL_CACHE_TTL = 15 * 60 * 1000;
+const RESEARCH_CACHE_TTL = 30 * 60 * 1000;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -123,6 +131,45 @@ function showToast(message) {
 
 function setLoading(loading) {
   $("#loadingOverlay").classList.toggle("hidden", !loading);
+}
+
+function freshCacheEntry(cache, key, ttl) {
+  const entry = cache.get(key);
+  return entry && Date.now() - entry.savedAt < ttl ? entry.value : null;
+}
+
+function detailCacheKey(code) {
+  return `${code}:${state.profile}:${state.range}`;
+}
+
+async function fetchFundDetail(code) {
+  const key = detailCacheKey(code);
+  if (state.fundDetailRequests.has(key)) return state.fundDetailRequests.get(key);
+  const request = fetch(`/api/fund/${code}?profile=${state.profile}&range=${state.range}`)
+    .then(async (response) => {
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "数据读取失败");
+      state.fundDetailCache.set(key, { savedAt: Date.now(), value: payload });
+      return payload;
+    })
+    .finally(() => state.fundDetailRequests.delete(key));
+  state.fundDetailRequests.set(key, request);
+  return request;
+}
+
+function prefetchFund(code) {
+  if (!/^\d{6}$/.test(code || "")) return;
+  const key = detailCacheKey(code);
+  if (!freshCacheEntry(state.fundDetailCache, key, DETAIL_CACHE_TTL)) fetchFundDetail(code).catch(() => {});
+}
+
+function enableFundPrefetch(elements, dataKey) {
+  elements.forEach((element) => {
+    const warm = () => prefetchFund(element.dataset[dataKey]);
+    element.addEventListener("pointerenter", warm, { once: true });
+    element.addEventListener("focus", warm, { once: true });
+    element.addEventListener("touchstart", warm, { once: true, passive: true });
+  });
 }
 
 function setSignedValue(selector, value) {
@@ -397,7 +444,9 @@ function renderPortfolioRows() {
       <td><button class="icon-button small row-action" data-open-code="${item.code}" title="查看单基分析" aria-label="查看${escapeHtml(item.name)}分析"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></td>
     </tr>`;
   }).join("");
-  $$('[data-open-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.openCode)));
+  const openButtons = $$('[data-open-code]');
+  openButtons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.openCode)));
+  enableFundPrefetch(openButtons, "openCode");
   $$('[data-group-code]').forEach((select) => select.addEventListener("change", () => {
     const fund = state.portfolio.find((item) => item.code === select.dataset.groupCode);
     if (!fund) return;
@@ -446,7 +495,9 @@ function renderTrendLeaders(items) {
       <span class="entry-chip ${derived.entry.state}">${escapeHtml(derived.entry.label)}</span>
     </button>`;
   }).join("");
-  $$('[data-leader-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.leaderCode)));
+  const leaderButtons = $$('[data-leader-code]');
+  leaderButtons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.leaderCode)));
+  enableFundPrefetch(leaderButtons, "leaderCode");
 }
 
 const MARKET_SUGGESTION_RISK = { base: 0, hold: 1, wait: 2, sell: 3 };
@@ -572,7 +623,9 @@ function renderMarketRiskAlerts() {
     <div><strong>${escapeHtml(alert.sector)} · ${escapeHtml(alert.title)}</strong><p>${escapeHtml(alert.detail)}</p><small>建议：${escapeHtml(alert.advice)}</small></div>
     <span class="market-risk-actions">${alert.code ? `<button class="risk-open-button" data-risk-code="${escapeHtml(alert.code)}">查看详情</button>` : ""}<button class="icon-button small" data-dismiss-market-alert="${escapeHtml(alert.id)}" title="确认并隐藏该预警" aria-label="确认并隐藏该预警"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button></span>
   </div>`).join("");
-  $$('[data-risk-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.riskCode)));
+  const riskButtons = $$('[data-risk-code]');
+  riskButtons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.riskCode)));
+  enableFundPrefetch(riskButtons, "riskCode");
   $$('[data-dismiss-market-alert]').forEach((button) => button.addEventListener("click", () => {
     const alert = state.marketAlerts.find((item) => item.id === button.dataset.dismissMarketAlert);
     if (!alert) return;
@@ -603,7 +656,9 @@ function renderMarketOpportunities(payload) {
       <span class="market-decision"><span class="entry-chip ${item.suggestion.state}">${escapeHtml(item.suggestion.label)}</span><small title="${escapeHtml(item.suggestion.detail)}">${escapeHtml(item.suggestion.detail)}</small></span>
     </button>`;
     }).join("");
-    $$('[data-market-code]').forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.marketCode)));
+    const marketButtons = $$('[data-market-code]');
+    marketButtons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.marketCode)));
+    enableFundPrefetch(marketButtons, "marketCode");
   }
   const updated = new Date(payload.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   setText("#marketOpportunitiesUpdated", `排行净值日 ${payload.rankDate || "--"} · ${updated} 完成板块去重`);
@@ -1133,7 +1188,9 @@ function renderWatchlist() {
         <strong>${escapeHtml(fund.name)}</strong><span>${fund.code}</span><em>查看</em>
       </button>`).join("")}`;
   }).join("");
-  list.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.code)));
+  const watchButtons = [...list.querySelectorAll("button")];
+  watchButtons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.code)));
+  enableFundPrefetch(watchButtons, "code");
 }
 
 function escapeHtml(value) {
@@ -1174,7 +1231,8 @@ function renderSignal(signal, analogs, structure) {
   const action = detailActionForSignal(signal, structure);
   setText("#trendScore", formatTrendLevel(signal.score));
   setText("#signalTitle", action.label);
-  setText("#signalAction", `${action.detail}。统一模型结论：${signal.signal}。${signal.conflict ? ` 冲突处理：${signal.conflict}` : ""}`);
+  const actionDetail = String(action.detail || "等待更多正式净值数据").replace(/；下一检查：.*$/, "");
+  setText("#signalAction", actionDetail.endsWith("。") ? actionDetail : `${actionDetail}。`);
   $("#signalBand").dataset.action = action.state;
   setText("#confidenceValue", `${signal.confidence}%`);
   $("#confidenceBar").style.width = `${signal.confidence}%`;
@@ -1216,6 +1274,21 @@ function confirmationText(group) {
   return { state: "pending", label: "待核验", detail: group?.evidence?.join(" · ") || "数据覆盖不足" };
 }
 
+function riskPresentation(risk) {
+  const level = risk?.level || "normal";
+  const reasons = risk?.reasons?.filter((reason) => reason !== "未触发独立风险门控") || [];
+  const contains = (text) => reasons.some((reason) => reason.includes(text));
+  if (level === "emergency") return { label: "异常下跌，优先避险", detail: reasons[0] || "短期跌幅或波动已达到异常阈值，先核对数据与赎回规则。" };
+  if (level === "high") return { label: "趋势转弱，停止加仓", detail: reasons[0] || "中长期结构进入防守条件，结合持有期与赎回费评估降仓。" };
+  if (contains("过热")) return { label: "短期过热，避免追涨", detail: reasons.find((reason) => reason.includes("过热")) };
+  if (contains("波动率")) return { label: "波动偏高，控制仓位", detail: reasons.find((reason) => reason.includes("波动率")) };
+  if (contains("修复") || contains("MA60")) return { label: "修复未稳，继续观察", detail: reasons.find((reason) => reason.includes("修复") || reason.includes("MA60")) };
+  if (contains("回调")) return { label: "回调观察，暂缓加仓", detail: reasons.find((reason) => reason.includes("回调")) };
+  if (contains("回撤")) return { label: "回撤较深，分批处理", detail: reasons.find((reason) => reason.includes("回撤")) };
+  if (level === "watch") return { label: "暂缓加仓，等待改善", detail: reasons[0] || "存在需要继续观察的风险条件。" };
+  return { label: "未见额外风险", detail: "当前未触发异常下跌、趋势破坏、过热或高波动条件。" };
+}
+
 function renderDecisionMatrix(decision) {
   if (!decision) return;
   setText("#decisionSetup", decision.setupLabel);
@@ -1226,8 +1299,9 @@ function renderDecisionMatrix(decision) {
     setText(`#${selector}HorizonScore`, horizon ? `独立强度 ${horizon.score > 0 ? "+" : ""}${horizon.score}` : "--");
     $(`#${selector}Horizon`).dataset.state = horizon?.state || "neutral";
   }
-  setText("#decisionRiskLabel", decision.risk?.label || "常规风险");
-  setText("#decisionRiskReasons", decision.risk?.reasons?.join(" · ") || "未触发独立风险门控");
+  const riskCopy = riskPresentation(decision.risk);
+  setText("#decisionRiskLabel", riskCopy.label);
+  setText("#decisionRiskReasons", riskCopy.detail);
   $("#decisionRisk").dataset.risk = decision.risk?.level || "normal";
   for (const [key, labelSelector, copySelector] of [
     ["trend", "#trendConfirmation", "#trendConfirmationCopy"],
@@ -1334,18 +1408,35 @@ function renderFundResearch(research) {
 }
 
 async function loadFundResearch(code) {
+  const cached = freshCacheEntry(state.fundResearchCache, code, RESEARCH_CACHE_TTL);
+  if (cached) {
+    if (state.code === code) renderFundResearch(cached);
+    return cached;
+  }
+  if (state.fundResearchRequests.has(code)) return state.fundResearchRequests.get(code);
   setText("#researchCoverage", "正在读取持仓与公司财报");
   $("#holdingsRows").innerHTML = '<tr><td colspan="6">正在读取最近披露持仓</td></tr>';
   $("#companyResearch").innerHTML = '<div class="company-placeholder"><strong>研究层计算中</strong><span>正在读取重仓公司财报和公告。</span></div>';
-  try {
+  const request = (async () => {
+    try {
     const response = await fetch(`/api/research/fund/${code}`);
     const research = await response.json();
     if (!response.ok) throw new Error(research.error || "基金研究数据读取失败");
-    renderFundResearch(research);
-  } catch (error) {
-    setText("#researchCoverage", "研究数据暂不可用");
-    $("#holdingsRows").innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
-  }
+      state.fundResearchCache.set(code, { savedAt: Date.now(), value: research });
+      if (state.code === code) renderFundResearch(research);
+      return research;
+    } catch (error) {
+      if (state.code === code) {
+        setText("#researchCoverage", "研究数据暂不可用");
+        $("#holdingsRows").innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
+      }
+      throw error;
+    } finally {
+      state.fundResearchRequests.delete(code);
+    }
+  })();
+  state.fundResearchRequests.set(code, request);
+  return request;
 }
 
 function researchList(title, items, emptyText) {
@@ -1420,22 +1511,35 @@ function renderPayload(payload) {
 
 async function loadFund(code = state.code) {
   if (!/^\d{6}$/.test(code)) return showToast("请输入6位基金代码");
+  clearTimeout(state.searchTimer);
+  $("#fundSearch").value = "";
+  $("#searchResults").hidden = true;
+  $("#fundSearch").blur();
   showView("detail");
-  setLoading(true);
   state.code = code;
+  const loadSequence = ++state.detailLoadSequence;
   localStorage.setItem("fund-code", code);
+  const key = detailCacheKey(code);
+  const cached = freshCacheEntry(state.fundDetailCache, key, DETAIL_CACHE_TTL);
+  if (cached) {
+    renderPayload(cached);
+    setLoading(false);
+    loadFundResearch(code).catch(() => {});
+  } else {
+    setLoading(true);
+  }
   try {
-    const response = await fetch(`/api/fund/${code}?profile=${state.profile}&range=${state.range}`);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "数据读取失败");
+    const payload = await fetchFundDetail(code);
+    if (state.code !== code) return;
     renderPayload(payload);
-    loadFundResearch(code);
+    loadFundResearch(code).catch(() => {});
     if (payload.fund.staleReason) showToast("上游数据暂不可用，当前显示最近一次缓存");
   } catch (error) {
+    if (state.code !== code || state.detailLoadSequence !== loadSequence) return;
     showToast(error.message);
     setText("#sourceStatus", "数据连接失败");
   } finally {
-    setLoading(false);
+    if (state.code === code && state.detailLoadSequence === loadSequence) setLoading(false);
   }
 }
 

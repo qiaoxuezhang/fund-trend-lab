@@ -13,7 +13,7 @@
   <title>净值罗盘 | 场外基金趋势实验室</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260811-ui4">
+  <link rel="stylesheet" href="/styles.css?v=20260812-final1">
 </head>
 <body>
   <header class="topbar">
@@ -206,56 +206,67 @@
         </div>
       </section>
 
-      <section class="signal-band" id="signalBand">
-        <div class="score-block">
-          <div class="score-ring" id="scoreRing"><span id="trendScore">--</span><small>-10～+10</small></div>
-          <div>
-            <span class="eyebrow">中长期趋势结论</span>
-            <h2 id="signalTitle">计算中</h2>
-            <p id="signalAction">正在汇总趋势、动能和风险指标。</p>
-            <p class="score-meaning">多周期校准分为 -10.0 至 +10.0：长期状态 35%、中期趋势与修复 30%、短期择时 25%、风险约束 10%。各层先独立标准化，再由趋势状态校验；它不是上涨概率。</p>
-          </div>
+      <section class="decision-summary" id="signalBand">
+        <div class="decision-primary">
+          <span class="eyebrow">当前建议</span>
+          <h2 id="signalTitle">计算中</h2>
+          <p id="signalAction">正在汇总趋势、动能和风险指标。</p>
+          <div class="decision-next"><span>技术形态 <b id="decisionSetup">计算中</b></span><small id="decisionNextCheck">等待下一触发条件</small></div>
         </div>
-        <div class="confidence-block">
-          <div class="confidence-line"><span>独立证据组一致性</span><strong id="confidenceValue">--</strong></div>
-          <div class="confidence-track"><i id="confidenceBar"></i></div>
-          <p id="confidenceCopy">等待指标计算</p>
-        </div>
-        <div class="analog-block">
-          <span class="eyebrow">历史相似状态 · 后20个净值日</span>
-          <div class="analog-grid">
-            <div><strong id="analogRate">--</strong><span>上涨占比</span></div>
-            <div><strong id="analogMedian">--</strong><span>收益中位数</span></div>
-            <div><strong id="analogCount">--</strong><span>历史样本</span></div>
-          </div>
+        <div class="horizon-grid decision-glance">
+          <div class="horizon-item" id="shortHorizon"><span>短期</span><strong id="shortHorizonLabel">--</strong><small id="shortHorizonScore">--</small></div>
+          <div class="horizon-item" id="mediumHorizon"><span>中期</span><strong id="mediumHorizonLabel">--</strong><small id="mediumHorizonScore">--</small></div>
+          <div class="horizon-item" id="longHorizon"><span>中长期</span><strong id="longHorizonLabel">--</strong><small id="longHorizonScore">--</small></div>
+          <div class="horizon-item risk-horizon" id="decisionRisk"><span>当前风险与应对</span><strong id="decisionRiskLabel">--</strong><small id="decisionRiskReasons">--</small></div>
         </div>
       </section>
 
-      <section class="trend-structure-band" id="trendStructureBand" data-structure="mixed" aria-labelledby="trendStructureLabel">
-        <div class="trend-structure-status"><span>趋势结构状态</span><strong id="trendStructureLabel">计算中</strong></div>
-        <div><p id="trendStructureDetail">正在区分短期回调、修复过程与中长期趋势破坏。</p><small id="trendStructureEvidence">等待均线与动量证据</small></div>
-        <div class="repair-power-block"><span>修复动力</span><strong><b id="repairPowerValue">--</b><small id="repairPowerLabel">证据分</small></strong><p id="repairPowerWarning">仅衡量修复证据，不代表上涨概率</p></div>
-        <div class="trend-structure-advice"><span>风险动作</span><strong id="trendStructureAdvice">等待结构确认</strong></div>
-      </section>
+      <details class="model-details" id="modelDetails">
+        <summary>
+          <span class="model-prompt-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m6 14v-7m5 7V3M3 19h18"/></svg>
+          </span>
+          <span class="model-prompt-copy"><b>想知道建议怎么得出？</b><small>点此查看校准分、历史样本、趋势结构和三层确认</small></span>
+          <span class="model-prompt-action"><b class="when-closed">展开依据</b><b class="when-open">收起依据</b></span>
+        </summary>
+        <div class="model-details-body">
+          <section class="signal-band model-signal-band">
+            <div class="score-block">
+              <div class="score-ring" id="scoreRing"><span id="trendScore">--</span><small>校准分</small></div>
+              <div><span class="eyebrow">多周期校准</span><h2>方向强度</h2><p class="score-meaning">分数用于比较当前结构强弱，不是上涨概率，也不直接等于买卖建议。</p></div>
+            </div>
+            <div class="confidence-block">
+              <div class="confidence-line"><span>证据一致性</span><strong id="confidenceValue">--</strong></div>
+              <div class="confidence-track"><i id="confidenceBar"></i></div>
+              <p id="confidenceCopy">等待指标计算</p>
+            </div>
+            <div class="analog-block">
+              <span class="eyebrow">相似状态后20个净值日</span>
+              <div class="analog-grid">
+                <div><strong id="analogRate">--</strong><span>上涨占比</span></div>
+                <div><strong id="analogMedian">--</strong><span>收益中位数</span></div>
+                <div><strong id="analogCount">--</strong><span>样本数</span></div>
+              </div>
+            </div>
+          </section>
 
-      <section class="decision-matrix-band" aria-labelledby="decisionMatrixTitle">
-        <div class="decision-matrix-heading">
-          <div><span class="eyebrow">买入、持有与风险的独立证据</span><h2 id="decisionMatrixTitle">多周期决策台</h2></div>
-          <div class="decision-setup"><span>当前技术形态</span><strong id="decisionSetup">计算中</strong><small id="decisionNextCheck">等待下一触发条件</small></div>
+          <section class="trend-structure-band" id="trendStructureBand" data-structure="mixed" aria-labelledby="trendStructureLabel">
+            <div class="trend-structure-status"><span>趋势结构</span><strong id="trendStructureLabel">计算中</strong></div>
+            <div><p id="trendStructureDetail">正在区分短期回调、修复过程与中长期趋势破坏。</p><small id="trendStructureEvidence">等待均线与动量证据</small></div>
+            <div class="repair-power-block"><span>修复动力</span><strong><b id="repairPowerValue">--</b><small id="repairPowerLabel">证据分</small></strong><p id="repairPowerWarning">仅衡量修复证据</p></div>
+            <div class="trend-structure-advice"><span>结构应对</span><strong id="trendStructureAdvice">等待结构确认</strong></div>
+          </section>
+
+          <section class="decision-matrix-band" aria-label="三层确认与交叉事件">
+            <div class="confirmation-grid" id="confirmationGrid">
+              <div><span>趋势结构</span><strong id="trendConfirmation">等待计算</strong><small id="trendConfirmationCopy">--</small></div>
+              <div><span>动能触发</span><strong id="momentumConfirmation">等待计算</strong><small id="momentumConfirmationCopy">--</small></div>
+              <div><span>持仓基本面</span><strong id="underlyingConfirmation">待核验</strong><small id="underlyingConfirmationCopy">进入组合后核验</small></div>
+            </div>
+            <div class="crossover-strip"><span>近期交叉</span><strong id="crossoverSummary">等待识别</strong><small>金叉只作触发，不单独构成买入依据。</small></div>
+          </section>
         </div>
-        <div class="horizon-grid">
-          <div class="horizon-item" id="shortHorizon"><span>短期 · 5至20日</span><strong id="shortHorizonLabel">--</strong><small id="shortHorizonScore">--</small></div>
-          <div class="horizon-item" id="mediumHorizon"><span>中期 · 20至60日</span><strong id="mediumHorizonLabel">--</strong><small id="mediumHorizonScore">--</small></div>
-          <div class="horizon-item" id="longHorizon"><span>中长期 · 60至120日</span><strong id="longHorizonLabel">--</strong><small id="longHorizonScore">--</small></div>
-          <div class="horizon-item risk-horizon" id="decisionRisk"><span>独立风险门控</span><strong id="decisionRiskLabel">--</strong><small id="decisionRiskReasons">--</small></div>
-        </div>
-        <div class="confirmation-grid" id="confirmationGrid">
-          <div><span>第一层</span><strong id="trendConfirmation">趋势结构</strong><small id="trendConfirmationCopy">等待计算</small></div>
-          <div><span>第二层</span><strong id="momentumConfirmation">动能触发</strong><small id="momentumConfirmationCopy">等待计算</small></div>
-          <div><span>第三层</span><strong id="underlyingConfirmation">持仓基本面</strong><small id="underlyingConfirmationCopy">进入组合后核验</small></div>
-        </div>
-        <div class="crossover-strip"><span>交叉事件</span><strong id="crossoverSummary">等待 MA、MACD 与 KDJ 事件识别</strong><small>金叉只作触发，不单独构成买入依据；场外基金信号在正式净值确认后评估。</small></div>
-      </section>
+      </details>
 
       <section class="toolbar-band">
         <div class="metric-strip">
@@ -422,13 +433,34 @@
           <div><b>03</b><strong>风险约束</strong><span>回撤、波动与结构破坏优先限制分数</span></div>
           <div><b>04</b><strong>分批执行</strong><span>用仓位和时间分散单一信号失误</span></div>
         </div>
+        <div class="method-reference">
+          <section class="indicator-guide" aria-labelledby="indicatorGuideTitle">
+            <div class="method-subheading"><span class="eyebrow">指标怎么读</span><h3 id="indicatorGuideTitle">只看用途，不用背公式</h3></div>
+            <dl>
+              <div><dt>MA20</dt><dd>约一个月平均成本，观察中期方向是否改善。</dd></div>
+              <div><dt>MA60</dt><dd>约三个月趋势分界，修复站稳与否的重要检查线。</dd></div>
+              <div><dt>MA120</dt><dd>中长期骨架，只判断大方向，不直接作为短期买点。</dd></div>
+              <div><dt>MACD</dt><dd>观察动能增强或衰减；金叉只是触发，不等于必涨。</dd></div>
+              <div><dt>KDJ / RSI</dt><dd>观察短期位置与过热，过高时重点防止追涨。</dd></div>
+              <div><dt>回撤 / 波动率</dt><dd>衡量风险背景，数值越高越应降低单次仓位并分批执行。</dd></div>
+            </dl>
+          </section>
+          <section class="reminder-guide" aria-labelledby="reminderGuideTitle">
+            <div class="method-subheading"><span class="eyebrow">提醒形式</span><h3 id="reminderGuideTitle">风险出现时怎么提示</h3></div>
+            <div class="reminder-list">
+              <p><b>页面内提示</b><span>详情页直接显示风险原因与动作；组合页显示候选失效、降仓和紧急风险。</span></p>
+              <p><b>系统通知</b><span>开启“风险提醒”后，浏览器或已安装 PWA 会在策略动作、止盈目标或风险等级变化时通知。</span></p>
+              <p><b>检查频率</b><span>按场外基金正式净值低频检查。免费本地模式下，网页或 PWA 完全关闭后不会继续计算。</span></p>
+            </div>
+          </section>
+        </div>
         <p class="developer-notice">© 2026 净值罗盘。软件、界面、评分模型与文档保留全部权利；未经书面授权不得复制部署、再分发或商业化。</p>
       </section>
       </div>
     </main>
   </div>
 
-  <div class="loading-overlay" id="loadingOverlay"><div class="loading-mark">N</div><strong>正在读取基金净值</strong><span>计算趋势、动能与风险指标</span></div>
+  <div class="loading-overlay" id="loadingOverlay"><div class="loading-mark">N</div><strong>正在读取最新净值</strong><span>首次进入会稍慢，本次使用期间再次打开会更快</span></div>
   <div class="modal-backdrop" id="groupModal" hidden>
     <section class="group-modal" role="dialog" aria-modal="true" aria-labelledby="groupModalTitle">
       <div class="modal-heading"><div><span class="eyebrow">客户自定义</span><h2 id="groupModalTitle">管理关注分组</h2></div><button class="icon-button" id="closeGroupModal" aria-label="关闭分组管理"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>

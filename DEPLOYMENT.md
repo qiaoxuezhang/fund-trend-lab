@@ -4,7 +4,7 @@
 
 ## 推荐结构
 
-当前零成本路线使用“GitHub 公开仓库 + Render Free Web Service + Render HTTPS 域名”。客户的自选基金、分组、成本、交易记录和止盈目标仍保存在各自浏览器中，云服务只处理公开基金数据查询与可重新生成的缓存。
+当前零成本路线使用“GitHub 仓库 + Render Free Web Service + Render HTTPS 域名”。客户的自选基金、分组、成本、交易记录和止盈目标仍保存在各自浏览器中，云服务只处理公开基金数据查询与可重新生成的缓存。
 
 ## 部署到 Render
 
@@ -18,9 +18,15 @@
 HOST=0.0.0.0
 NODE_ENV=production
 ALLOW_INDEXING=false
+APP_ACCESS_PASSWORD=在 Render Secret 中单独设置
+APP_SESSION_SECRET=使用 Render 自动生成的随机值
 ```
 
+不要把真实访问密码写入 `render.yaml`、`.env.example`、GitHub Issue、提交记录或前端 JavaScript。修改 Render 环境变量后需要等待服务重新部署；更换 `APP_ACCESS_PASSWORD` 或 `APP_SESSION_SECRET` 会使旧访问会话失效。
+
 6. 需要品牌域名时，在 Render 的 Custom Domains 中添加域名，再按控制台提示配置 DNS。
+
+Render 分配的 `onrender.com` 地址不能自定义为任意名称；品牌化应购买自己的域名，例如 `fund.example.com`，在 Render 添加 Custom Domain 后按提示配置 DNS。应用代码不依赖当前域名，更换域名无需修改业务逻辑。
 
 免费实例适合当前约 10 人的邀请测试。长时间无人访问后的首次打开可能需要等待服务启动；服务端不保存客户数据，因此休眠和重新部署不影响浏览器本地组合。
 
@@ -55,4 +61,4 @@ http://192.168.31.151:4173/
 - 新浏览器首次访问时组合为空。
 - HTTPS 有效，分享按钮复制或分享的是正式公网域名。
 - 当前邀请测试环境设置 `ALLOW_INDEXING=false`，并同时通过页面 meta 标签和响应头禁止搜索引擎索引。
-- 不在源码、日志或环境变量中存放客户持仓、密码与保险箱文件。
+- 客户持仓和保险箱文件不进入服务器；访问密码只存放于 Render 加密环境变量，不写入源码或日志。

@@ -2,13 +2,13 @@
 
 更新日期：2026年8月11日
 
-## 当前临时地址
+## 当前固定地址
 
 ```text
-https://linda-hormone-marco-fall.trycloudflare.com/
+https://fund-trend-lab.onrender.com/
 ```
 
-该地址已于 2026年8月11日通过外部 HTTPS 验证，并确认加载包含“3个月”区间和指标图例的当前版本。新访客默认空组合，添加的基金和历史交易只保存在访问者自己的浏览器中。全市场板块代表接口已验证返回按主导板块去重的候选。
+该地址由 Render 提供 HTTPS。新访客默认空组合，添加的基金和历史交易只保存在访问者自己的浏览器中。需要限制访问时，在 Render 设置 `APP_ACCESS_PASSWORD` 与 `APP_SESSION_SECRET`，重新部署后主页和基金 API 都会启用访问验证。
 
 ## 同一 Wi-Fi 访问
 
@@ -20,21 +20,14 @@ http://192.168.31.151:4173/
 
 手机和电脑必须连接同一 Wi-Fi；如果 Windows 防火墙阻止端口 `4173`，需要允许 Node.js 在“专用网络”中通信。局域网地址不适合公开推广，也不应在路由器上直接映射到互联网。
 
-## 临时地址边界
+## Render Free 边界
 
-- 当前地址由 Cloudflare Quick Tunnel 提供，不是永久域名。
-- 当前隧道固定使用 HTTP/2，以降低部分网络环境中 QUIC 连接不稳定的影响，但仍然没有可用性保证。
-- 本机 Node 服务和 `cloudflared` 进程必须持续运行，电脑不能关机、休眠或断网。
-- 隧道进程重启后通常会生成新的随机地址。
-- 当前没有服务器账户系统；用户通过浏览器本地数据隔离，并可使用加密保险箱跨设备迁移。
+- 免费实例可能在无人访问时休眠，首次打开会有冷启动等待。
+- 当前没有客户账户数据库；用户通过浏览器本地数据隔离，并可使用加密保险箱手动迁移。
+- Render 子域名用于技术访问，品牌推广建议绑定自有域名。
 
 ## 长期固定地址
 
-项目已经提供 `Dockerfile`、`render.yaml`、PWA Manifest 和 Service Worker。获得使用者自己的 GitHub 与 Render 账户后，可使用 Blueprint 部署为固定 HTTPS 地址；有自有域名时可继续绑定品牌域名。另一条路线是使用 Cloudflare 账户和自有域名创建 Named Tunnel。具体步骤见 `DEPLOYMENT.md`。
+项目已经提供 `Dockerfile`、`render.yaml`、PWA Manifest 和 Service Worker。可在 Render 的 Custom Domains 中绑定自有品牌域名；具体步骤见 `DEPLOYMENT.md`。
 
-## 当前运行进程
-
-- Node 服务：端口 `4173`
-- Cloudflare Tunnel：转发到 `http://127.0.0.1:4173`
-
-进程编号可能在重启后变化，不应写入自动化脚本。
+本地开发服务仍使用 `http://127.0.0.1:4173/`，只用于本机测试，不影响 Render 公网地址。

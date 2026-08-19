@@ -13,7 +13,7 @@
   <title>净值罗盘 | 场外基金趋势实验室</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260812-final1">
+  <link rel="stylesheet" href="/styles.css?v=20260818-entry1">
 </head>
 <body>
   <header class="topbar">
@@ -113,11 +113,12 @@
             <small id="portfolioProfit">依据截图金额建立，待官方净值校准</small>
           </div>
           <div class="action-summary" aria-label="当前动作统计">
-            <button data-summary-action="entry"><span>建仓候选</span><strong id="baseCount">--</strong></button>
+            <button data-summary-action="entry"><span>可研究入场</span><strong id="baseCount">--</strong></button>
             <button data-summary-action="hold"><span>持有观察</span><strong id="holdCount">--</strong></button>
             <button data-summary-action="wait"><span>等待确认</span><strong id="waitCount">--</strong></button>
             <button data-summary-action="take-profit"><span>分批止盈</span><strong id="takeProfitCount">--</strong></button>
             <button data-summary-action="defense"><span>风险动作</span><strong id="sellCount">--</strong></button>
+            <small class="action-summary-hint" id="entryStatusHint">可研究入场只统计自选与市场候选，持仓单独管理。</small>
           </div>
           <div class="target-summary"><span>默认止盈目标</span><strong id="defaultTargetLabel">20%</strong><button class="target-settings-link" id="targetSettingsButton" type="button">设置目标</button></div>
           <div class="refresh-summary"><span>低频检查</span><strong id="refreshCountdown">--:--</strong><small id="marketStatus">读取市场状态</small></div>
@@ -125,22 +126,34 @@
 
         <div class="decision-note">
           <strong class="quality-status" id="qualityStatus">校验中</strong>
-          <span>动作只使用正式净值；重仓持股、财报和消息用于中期验证，不把盘中估值当成真实净值。</span>
+          <span>只用正式净值生成动作；盘中估值不参与提示。</span>
         </div>
 
         <div class="prompt-guide">
-          <strong>研判口径</strong>
-          <span><i class="base"></i><b>分批建仓</b> 净值校验、上行结构、证据组一致性和风险约束均通过</span>
-          <span><i class="hold"></i><b>持有观察</b> 未触发加仓或退出条件，跟踪中期结构</span>
-          <span><i class="wait"></i><b>等待确认</b> 数据、样本或独立证据组尚未统一</span>
-          <span><i class="take-profit"></i><b>分批止盈</b> 达到客户目标收益，按计划逐步兑现</span>
-          <span><i class="sell"></i><b>风险退出</b> 中长期弱势达到防守阈值</span>
+          <strong>信号</strong>
+          <span><i class="base"></i><b>可研究</b></span>
+          <span><i class="hold"></i><b>持有观察</b></span>
+          <span><i class="wait"></i><b>等待确认</b></span>
+          <span><i class="take-profit"></i><b>分批止盈</b></span>
+          <span><i class="sell"></i><b>风险动作</b></span>
+          <small>详细依据进入单基页面查看</small>
         </div>
+
+        <section class="entry-window-band" aria-labelledby="entryWindowTitle">
+          <div class="entry-window-heading">
+            <div><span class="eyebrow">正式净值入场追踪</span><h2 id="entryWindowTitle">今日入场与波动提示</h2></div>
+            <p>短期 5-20 日 · 中期 20-60 日 · 长期 60-120 日；只提示通过正式净值校验的研究窗口。</p>
+          </div>
+          <div class="entry-window-summary" id="entryWindowSummary">
+            <div class="entry-window-empty">正在合并市场、自选与持仓信号</div>
+          </div>
+          <small class="entry-window-note">市场代表用于对比；持仓只做加仓、止盈和风险跟踪。</small>
+        </section>
 
         <section class="trend-leaders-band" aria-labelledby="trendLeadersTitle">
           <div class="trend-leaders-heading">
-            <div><span class="eyebrow">当前自选对比</span><h2 id="trendLeadersTitle">趋势强度前三</h2></div>
-            <p>仅在当前浏览器的关注基金中比较；同一基金 A/C 份额合并为一类，保留趋势更强的代表份额。</p>
+            <div><span class="eyebrow">当前自选与持仓</span><h2 id="trendLeadersTitle">自选与持仓重点信号</h2></div>
+            <p>按短期、长期和波动排序；同一基金 A/C 份额合并。</p>
           </div>
           <div class="trend-leaders" id="trendLeaders"><div class="trend-leaders-empty">正在计算自选基金趋势</div></div>
         </section>
@@ -148,10 +161,10 @@
         <section class="market-opportunities-band" aria-labelledby="marketOpportunitiesTitle">
           <div class="market-opportunities-heading">
             <div><span class="eyebrow">公开排行交叉验证</span><h2 id="marketOpportunitiesTitle">全市场板块代表</h2></div>
-            <div><p>从近3个月强势候选中识别最近披露持仓，同一主导板块只保留一只，再验证趋势、风险与持仓财务。</p><span id="marketOpportunitiesUpdated">正在扫描公开市场候选</span></div>
+            <div><p>板块去重后，复核净值、风险与最近披露持仓。</p><span id="marketOpportunitiesUpdated">正在扫描公开市场候选</span></div>
           </div>
           <div class="market-risk-monitor">
-            <div class="market-risk-summary"><span>候选风险监测</span><strong id="marketRiskStatus">正在建立本地基线</strong><small id="marketRiskCopy">网页或 PWA 打开时，按正式净值节奏检查代表更换与结构恶化</small></div>
+            <div class="market-risk-summary"><span>候选风险监测</span><strong id="marketRiskStatus">正在建立本地基线</strong><small id="marketRiskCopy">监测代表更换、窗口转弱与结构恶化</small></div>
             <div class="market-risk-alerts" id="marketRiskAlerts" hidden></div>
           </div>
           <div class="market-opportunities" id="marketOpportunities"><div class="market-opportunities-empty">首次扫描需要读取候选基金净值和持仓，请稍候</div></div>
@@ -169,7 +182,7 @@
             </button>
             <div class="segmented" id="portfolioFilter">
               <button class="active" data-filter="all">全部状态</button>
-              <button data-filter="entry">建仓候选</button>
+              <button data-filter="entry">可研究入场</button>
               <button data-filter="hold">持有观察</button>
               <button data-filter="wait">等待确认</button>
               <button data-filter="take-profit">分批止盈</button>
@@ -504,6 +517,6 @@
     </section>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script type="module" src="/app.js?v=20260811-ui4"></script>
+  <script type="module" src="/app.js?v=20260818-entry1"></script>
 </body>
 </html>

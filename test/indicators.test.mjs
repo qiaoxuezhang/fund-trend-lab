@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { analyzeFund, kdj, sliceByRange } from "../src/indicators.mjs";
 import { parseFundRankRows, parseValue } from "../src/data-source.mjs";
 import { filterResearchNews } from "../src/research-source.mjs";
-import { decidePortfolioAction, normalizeTarget } from "../public/strategy.js";
+import { buildEntryTiming, decidePortfolioAction, normalizeTarget } from "../public/strategy.js";
 import { decryptVault, encryptVault } from "../public/vault.js";
 
 function samplePoints(length = 420, direction = 1) {
@@ -235,6 +235,41 @@ test("watchlist and holding receive different defensive actions", () => {
   const shared = { technicalState: "risk", score: -50, compositeScore: -50, confidence: 80, attentionThreshold: 36, reduceThreshold: -36, structureState: "broken", dataQuality: "verified", lagBusinessDays: 0, decision };
   assert.equal(decidePortfolioAction(shared).state, "avoid");
   assert.equal(decidePortfolioAction({ ...shared, hasHolding: true }).state, "reduce");
+});
+
+test("entry timing separates ready, pullback and defensive windows", () => {
+  const decision = {
+    horizon: { short: { label: "短期转强" }, long: { label: "长期偏强" } },
+    confirmation: { trend: { passed: true }, momentum: { passed: true }, passed: 3 },
+    risk: { level: "normal", reasons: [] }
+  };
+  const shared = {
+    dataQuality: "verified",
+    lagBusinessDays: 0,
+    structureState: "trend",
+    decision,
+    returns: { week: 2, month: 6, quarter: 12, halfYear: 18 }
+  };
+  assert.equal(buildEntryTiming({ ...shared, actionState: "base" }).state, "ready");
+  assert.equal(buildEntryTiming({ ...shared, actionState: "trial" }).state, "near");
+  assert.equal(buildEntryTiming({ ...shared, actionState: "base", returns: { ...shared.returns, month: 16 } }).state, "wait_pullback");
+  assert.equal(buildEntryTiming({ ...shared, actionState: "base", returns: { ...shared.returns, quarter: 36 } }).state, "ready");
+  assert.equal(buildEntryTiming({ ...shared, role: "holding", actionState: "hold", rsi: 80 }).label, "暂缓加仓");
+  assert.equal(buildEntryTiming({ ...shared, actionState: "avoid", structureState: "broken" }).state, "defensive");
+});
+
+test("entry timing treats recovery as near instead of a confirmed buy point", () => {
+  const timing = buildEntryTiming({
+    role: "watchlist",
+    actionState: "wait",
+    dataQuality: "verified",
+    lagBusinessDays: 0,
+    structureState: "repair",
+    returns: { week: 1.5, month: -1, quarter: -8, halfYear: 2 },
+    decision: { horizon: { short: { state: "positive", label: "短期转强" }, long: { state: "neutral", label: "长期震荡" } }, risk: { level: "watch", reasons: [] }, nextCheck: "等待 MA20 走平" }
+  });
+  assert.equal(timing.state, "near");
+  assert.match(timing.trigger, /MA20/);
 });
 
 test("multi-strategy backtest reports golden-cross and three-layer comparisons", () => {

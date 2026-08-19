@@ -744,7 +744,7 @@ export function analyzeFund(points, profile = "balanced") {
   const current = rows[currentIndex];
   const previous = rows[currentIndex - 1] ?? current;
   const periodReturns = {};
-  for (const [key, period] of Object.entries({ week: 5, month: 20, quarter: 60, year: 250 })) {
+  for (const [key, period] of Object.entries({ week: 5, month: 20, quarter: 60, halfYear: 120, year: 250 })) {
     periodReturns[key] = round(pctChange(values, currentIndex, period), 2);
   }
   const rawSignal = currentSignal ?? scoreAt(rows, currentIndex, profile);

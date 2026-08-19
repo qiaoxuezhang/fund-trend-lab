@@ -1,4 +1,4 @@
-import { decidePortfolioAction, normalizeTarget } from "./strategy.js";
+import { buildEntryTiming, decidePortfolioAction, normalizeTarget } from "./strategy.js";
 import { decryptVault, encryptVault } from "./vault.js";
 
 const DEFAULT_PORTFOLIO = [];
@@ -341,6 +341,8 @@ function compositeFor(item) {
   const usable = research?.fundamentalScore != null && research.coverage >= 15;
   const compositeScore = usable ? Math.round(item.signal.score * 0.75 + research.fundamentalScore * 0.25) : item.signal.score;
   const holding = holdingSnapshot(item);
+  const portfolioFund = state.portfolio.find((fund) => fund.code === item.code);
+  const hasHolding = Boolean(holding) || portfolioFund?.userGroup === "我的持仓";
   const targetPct = takeProfitTargetFor(item.code);
   const decision = item.decision ? structuredClone(item.decision) : null;
   if (decision?.confirmation?.underlying) {
@@ -364,13 +366,92 @@ function compositeFor(item) {
     volatility: item.current?.volatility,
     structureState: item.current?.structure?.state,
     holdingReturnPct: holding?.returnPct,
-    hasHolding: Boolean(holding),
+    hasHolding,
     targetPct,
     dataQuality: item.data?.quality,
     lagBusinessDays: item.data?.lagBusinessDays,
     decision
   });
-  return { research, compositeScore, entry, usable, holding, targetPct, decision };
+  return { research, compositeScore, entry, usable, holding, hasHolding, targetPct, decision };
+}
+
+function portfolioEntryTiming(item, derived = compositeFor(item)) {
+  const portfolioFund = state.portfolio.find((fund) => fund.code === item.code);
+  const isHolding = Boolean(derived.holding) || portfolioFund?.userGroup === "我的持仓";
+  return buildEntryTiming({
+    role: isHolding ? "holding" : "watchlist",
+    actionState: derived.entry?.state,
+    dataQuality: item.data?.quality,
+    lagBusinessDays: item.data?.lagBusinessDays,
+    returns: item.current?.periodReturns,
+    rsi: item.current?.rsi,
+    j: item.current?.j,
+    volatility: item.current?.volatility,
+    structureState: item.current?.structure?.state,
+    decision: derived.decision,
+    asOfDate: item.current?.date
+  });
+}
+
+function marketEntryTiming(item) {
+  return buildEntryTiming({
+    role: "market",
+    actionState: item.suggestion?.state,
+    dataQuality: item.dataQuality,
+    lagBusinessDays: item.dataQuality === "verified" ? 0 : 1,
+    returns: item.returns,
+    rsi: item.trend?.rsi,
+    j: item.trend?.j,
+    volatility: item.trend?.volatility,
+    structureState: item.trend?.structure?.state,
+    decision: item.trend?.decision,
+    asOfDate: item.rankDate || state.marketOpportunityPayload?.rankDate
+  });
+}
+
+function timingPriority(stateName) {
+  return ({ ready: 5, near: 4, waiting: 3, wait_pullback: 2, defensive: 1 })[stateName] ?? 0;
+}
+
+function renderEntryWindowSummary() {
+  const portfolioSignals = (state.portfolioPayload?.items ?? [])
+    .filter((item) => !item.error)
+    .map((item) => {
+      const derived = compositeFor(item);
+      const timing = portfolioEntryTiming(item, derived);
+      return { code: item.code, name: item.name, source: timing.role, timing };
+    });
+  const marketSignals = (state.marketOpportunityPayload?.items ?? []).map((item) => ({
+    code: item.code,
+    name: item.name,
+    source: "market",
+    timing: marketEntryTiming(item)
+  }));
+  const signals = [...portfolioSignals, ...marketSignals];
+  const candidates = signals
+    .filter((signal) => signal.source !== "holding" && ["ready", "near"].includes(signal.timing.state))
+    .sort((left, right) => timingPriority(right.timing.state) - timingPriority(left.timing.state))
+    .slice(0, 3);
+  const pullbacks = signals.filter((signal) => signal.source !== "holding" && signal.timing.state === "wait_pullback").slice(0, 3);
+  const holdingRisks = portfolioSignals
+    .filter((signal) => signal.source === "holding" && (signal.timing.state === "defensive" || signal.timing.highVolatility || signal.timing.state === "near"))
+    .sort((left, right) => timingPriority(left.timing.state) - timingPriority(right.timing.state))
+    .slice(0, 3);
+  const groups = [
+    { state: "ready", label: "入场窗口", items: candidates, empty: portfolioSignals.some((signal) => signal.source === "watchlist") ? "暂无：趋势、动能、风险尚未同时通过" : "暂无自选候选；持仓不计入新建仓" },
+    { state: "wait_pullback", label: "追涨风险", items: pullbacks, empty: "当前未发现明显追涨风险" },
+    { state: "defensive", label: "持仓动作", items: holdingRisks, empty: "当前持仓未出现重点波动提示" }
+  ];
+  const container = $("#entryWindowSummary");
+  if (!container) return;
+  const sourceLabel = (source) => ({ market: "市场", watchlist: "自选", holding: "持仓" })[source] || "跟踪";
+  container.innerHTML = groups.map((group) => `<div class="entry-summary-card ${group.state}">
+    <span class="entry-summary-heading"><b>${group.label}</b><small>${group.items.length} 只</small></span>
+    <div class="entry-summary-list">${group.items.length ? group.items.map((signal) => `<button data-entry-summary-code="${escapeHtml(signal.code)}"><strong>${escapeHtml(signal.name)}</strong><span>${escapeHtml(signal.timing.label)}</span><small>${sourceLabel(signal.source)} · ${escapeHtml(signal.timing.shortLabel)} · ${escapeHtml(signal.timing.longLabel)}</small></button>`).join("") : `<p>${group.empty}</p>`}</div>
+  </div>`).join("");
+  const buttons = $$('[data-entry-summary-code]');
+  buttons.forEach((button) => button.addEventListener("click", () => loadFund(button.dataset.entrySummaryCode)));
+  enableFundPrefetch(buttons, "entrySummaryCode");
 }
 
 function qualityLabel(item) {
@@ -430,17 +511,27 @@ function renderPortfolioRows() {
     const portfolioFund = state.portfolio.find((fund) => fund.code === item.code);
     const derived = compositeFor(item);
     const holding = derived.holding;
+    const timing = portfolioEntryTiming(item, derived);
     const tags = derived.research?.tags ?? [];
     const tagLabel = tags.length ? tags.map(escapeHtml).join(" / ") : derived.research ? "暂无披露持仓" : "系统标签读取中";
     const quality = qualityLabel(item);
     const scoreClass = signedClass(derived.compositeScore);
     const groupOptions = state.customGroups.map((group) => `<option value="${escapeHtml(group)}" ${portfolioFund?.userGroup === group ? "selected" : ""}>${escapeHtml(group)}</option>`).join("");
+    const shortCycleLabel = timing.state === "wait_pullback" && derived.hasHolding ? "短期偏热" : (derived.decision?.horizon?.short?.label || "短期待确认");
+    const actionLabel = derived.hasHolding && timing.state === "wait_pullback"
+      ? "持有，暂缓加仓"
+      : derived.hasHolding && timing.state === "defensive"
+        ? "持仓风险防守"
+        : derived.hasHolding && timing.state === "near"
+          ? "持有，观察企稳"
+          : derived.entry.label;
+    const showTimingChip = !derived.hasHolding || !["wait_pullback", "defensive", "near"].includes(timing.state);
     return `<tr data-code="${item.code}">
       <td><div class="fund-cell"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><span>${item.code} · ${tagLabel}</span><select class="inline-group-select" data-group-code="${item.code}" aria-label="${escapeHtml(item.name)}关注分组">${groupOptions}</select></div></td>
       <td><div class="holding-cell"><strong>${formatNumber(item.current.nav)}</strong><span>${item.current.date} · ${quality.label}</span><small class="${signedClass(item.current.dailyChange)}">${formatPct(item.current.dailyChange)}</small></div></td>
       <td><div class="holding-cell"><strong class="${signedClass(holding?.returnPct)}">${formatPct(holding?.returnPct)}</strong><span>${holding?.currentValue != null ? formatMoney(holding.currentValue) : "未设置持仓成本"}</span><small>止盈目标 ${derived.targetPct.toFixed(1)}%</small></div></td>
-      <td><div class="cycle-cell"><span><b class="cycle-state ${derived.decision?.horizon?.short?.state || "neutral"}">${escapeHtml(derived.decision?.horizon?.short?.label || "短期待确认")}</b><b class="cycle-state ${derived.decision?.horizon?.long?.state || "neutral"}">${escapeHtml(derived.decision?.horizon?.long?.label || "长期待确认")}</b></span><small>${derived.decision?.confirmation?.passed ?? 0}/3层确认 · <b class="risk-level-text ${derived.decision?.risk?.level || "normal"}">${escapeHtml(derived.decision?.risk?.label || "常规风险")}</b></small></div></td>
-      <td><div class="action-cell"><span class="action-chip-row"><span class="entry-chip ${derived.entry.state}" title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(derived.entry.label)}</span><span class="structure-chip ${item.current?.structure?.state || "mixed"}" title="${escapeHtml(item.current?.structure?.detail || "等待均线结构确认")}">${escapeHtml(item.current?.structure?.label || "结构待确认")}</span></span><small title="${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}">${escapeHtml(item.current?.structure?.advice || derived.entry.detail || "")}</small></div></td>
+      <td><div class="cycle-cell"><span><b class="cycle-state ${derived.decision?.horizon?.short?.state || "neutral"}">${escapeHtml(shortCycleLabel)}</b><b class="cycle-state ${derived.decision?.horizon?.long?.state || "neutral"}">${escapeHtml(derived.decision?.horizon?.long?.label || "长期待确认")}</b></span><small>${derived.decision?.confirmation?.passed ?? 0}/3证据层通过 · <b class="risk-level-text ${derived.decision?.risk?.level || "normal"}">${escapeHtml(derived.decision?.risk?.label || "常规风险")}</b></small></div></td>
+      <td><div class="action-cell"><span class="action-chip-row"><span class="entry-chip ${derived.hasHolding && timing.state !== "defensive" ? "hold" : derived.entry.state}" title="${escapeHtml(derived.entry.detail || "")}">${escapeHtml(actionLabel)}</span>${showTimingChip ? `<span class="timing-chip ${timing.state}" title="${escapeHtml(timing.detail)}">${escapeHtml(timing.label)}</span>` : ""}</span><small title="${escapeHtml(timing.trigger)}">下一触发：${escapeHtml(timing.trigger)}</small></div></td>
       <td><button class="icon-button small row-action" data-open-code="${item.code}" title="查看单基分析" aria-label="查看${escapeHtml(item.name)}分析"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></td>
     </tr>`;
   }).join("");
@@ -465,11 +556,15 @@ function renderTrendLeaders(items) {
   const families = new Set();
   const ranked = items
     .filter((item) => !item.error)
-    .map((item) => ({ item, derived: compositeFor(item) }))
+    .map((item) => {
+      const derived = compositeFor(item);
+      return { item, derived, timing: portfolioEntryTiming(item, derived) };
+    })
     .sort((left, right) => {
       const leftVerified = left.item.data?.quality === "verified" && left.item.data?.lagBusinessDays === 0 ? 1 : 0;
       const rightVerified = right.item.data?.quality === "verified" && right.item.data?.lagBusinessDays === 0 ? 1 : 0;
       return rightVerified - leftVerified
+        || timingPriority(right.timing.state) - timingPriority(left.timing.state)
         || right.derived.compositeScore - left.derived.compositeScore
         || (right.item.current?.periodReturns?.quarter ?? -Infinity) - (left.item.current?.periodReturns?.quarter ?? -Infinity);
     })
@@ -482,17 +577,18 @@ function renderTrendLeaders(items) {
     .slice(0, 3);
   const container = $("#trendLeaders");
   if (!ranked.length) {
-    container.innerHTML = '<div class="trend-leaders-empty">添加基金后，这里会对自选范围内的趋势强度进行排序</div>';
+    container.innerHTML = '<div class="trend-leaders-empty">添加基金后，这里会优先显示接近入场窗口或需要关注波动的基金</div>';
     return;
   }
-  container.innerHTML = ranked.map(({ item, derived }, index) => {
+  container.innerHTML = ranked.map(({ item, timing }, index) => {
     const verified = item.data?.quality === "verified" && item.data?.lagBusinessDays === 0;
     return `<button class="trend-leader-card" data-leader-code="${item.code}">
       <span class="leader-rank">${String(index + 1).padStart(2, "0")}</span>
-      <span class="leader-identity"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${item.code} · ${verified ? "正式净值已校验" : "数据待确认"}</small></span>
-      <span class="leader-score ${signedClass(derived.compositeScore)}"><strong>${formatTrendLevel(derived.compositeScore)}</strong><small>结构校准分</small></span>
-      <span class="leader-return-pair"><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.month)}">${formatPct(item.current?.periodReturns?.month)}</strong><small>近1月</small></span><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.quarter)}">${formatPct(item.current?.periodReturns?.quarter)}</strong><small>近3月</small></span></span>
-      <span class="entry-chip ${derived.entry.state}">${escapeHtml(derived.entry.label)}</span>
+      <span class="leader-identity"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${item.code} · ${verified ? `净值日 ${item.current?.date}` : "数据待确认"}</small></span>
+      <span class="leader-cycle"><b>${escapeHtml(timing.shortLabel)}</b><small>${escapeHtml(timing.longLabel)}</small></span>
+      <span class="leader-return-pair"><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.week)}">${formatPct(item.current?.periodReturns?.week)}</strong><small>近5日</small></span><span class="leader-metric"><strong class="${signedClass(item.current?.periodReturns?.month)}">${formatPct(item.current?.periodReturns?.month)}</strong><small>近20日</small></span></span>
+      <span class="timing-chip ${timing.state}">${escapeHtml(timing.label)}</span>
+      <small class="leader-trigger" title="${escapeHtml(timing.trigger)}">下一触发：${escapeHtml(timing.trigger)}</small>
     </button>`;
   }).join("");
   const leaderButtons = $$('[data-leader-code]');
@@ -502,9 +598,11 @@ function renderTrendLeaders(items) {
 
 const MARKET_SUGGESTION_RISK = { base: 0, hold: 1, wait: 2, sell: 3 };
 const MARKET_STRUCTURE_RISK = { trend: 0, pullback: 1, repair: 1, mixed: 2, broken: 3 };
+const MARKET_TIMING_RISK = { ready: 0, near: 1, waiting: 2, wait_pullback: 2, defensive: 3 };
 
 function marketSnapshot(item, payload) {
   const structure = item.trend?.structure ?? { state: "mixed", label: "结构待确认", severity: "watch", advice: "进入单基详情重新核验趋势结构。" };
+  const timing = marketEntryTiming(item);
   return {
     sector: item.sector,
     code: item.code,
@@ -514,6 +612,8 @@ function marketSnapshot(item, payload) {
     drawdown: Number(item.trend?.drawdown),
     suggestionState: item.suggestion?.state ?? "wait",
     suggestionLabel: item.suggestion?.label ?? "等待确认",
+    timingState: timing.state,
+    timingLabel: timing.label,
     structureState: structure.state,
     structureLabel: structure.label,
     structureAdvice: structure.advice,
@@ -570,6 +670,7 @@ function updateMarketRiskTracking(payload) {
       const currentStructureRisk = MARKET_STRUCTURE_RISK[next.structureState] ?? 2;
       if (currentStructureRisk > previousStructureRisk) reasons.push(`结构由“${prior.structureLabel}”转为“${next.structureLabel}”`);
       if ((MARKET_SUGGESTION_RISK[next.suggestionState] ?? 2) > (MARKET_SUGGESTION_RISK[prior.suggestionState] ?? 2)) reasons.push(`建议由“${prior.suggestionLabel}”降为“${next.suggestionLabel}”`);
+      if ((MARKET_TIMING_RISK[next.timingState] ?? 2) > (MARKET_TIMING_RISK[prior.timingState] ?? 2)) reasons.push(`入场窗口由“${prior.timingLabel || "待确认"}”转为“${next.timingLabel}”`);
       if (Number.isFinite(prior.score) && Number.isFinite(next.score) && prior.score - next.score >= 20) reasons.push(`结构校准分下降 ${((prior.score - next.score) / 10).toFixed(1)}`);
       if (Number.isFinite(prior.confidence) && Number.isFinite(next.confidence) && prior.confidence - next.confidence >= 15) reasons.push(`证据组一致性下降 ${Math.round(prior.confidence - next.confidence)} 个百分点`);
       if (Number.isFinite(prior.drawdown) && Number.isFinite(next.drawdown) && next.drawdown <= prior.drawdown - 5) reasons.push(`回撤扩大 ${Math.abs(next.drawdown - prior.drawdown).toFixed(1)} 个百分点`);
@@ -646,14 +747,15 @@ function renderMarketOpportunities(payload) {
   } else {
     container.innerHTML = items.map((item, index) => {
       const structure = item.trend?.structure ?? { state: "mixed", label: "结构待确认", detail: "等待均线结构确认" };
+      const timing = marketEntryTiming(item);
       return `<button class="market-opportunity" data-market-code="${item.code}">
       <span class="market-opportunity-top"><b>${escapeHtml(item.sector)}</b><small>板块代表 ${String(index + 1).padStart(2, "0")} · 自动监测</small></span>
       <span class="market-opportunity-name"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${item.code} · 持仓期 ${escapeHtml(item.holdingsReportDate || "待披露")}</small></span>
-      <span class="market-return"><small>近1月</small><strong class="${signedClass(item.returns.month)}">${formatPct(item.returns.month)}</strong></span>
-      <span class="market-return"><small>近3月</small><strong class="${signedClass(item.returns.quarter)}">${formatPct(item.returns.quarter)}</strong></span>
-      <span class="market-evidence"><span>校准分 <b class="${signedClass(item.trend.score)}">${formatTrendLevel(item.trend.score)}</b></span><span>一致性 <b>${item.trend.confidence}%</b></span><span>回撤 <b class="${signedClass(item.trend.drawdown)}">${formatPct(item.trend.drawdown)}</b></span><span>基本面 <b>${item.fundamental.score == null ? "待补" : `${item.fundamental.score > 0 ? "+" : ""}${item.fundamental.score}`}</b></span></span>
-      <span class="market-structure"><span class="structure-chip ${structure.state}">${escapeHtml(structure.label)}</span><small title="${escapeHtml(structure.detail)}">${escapeHtml(structure.detail)}</small></span>
-      <span class="market-decision"><span class="entry-chip ${item.suggestion.state}">${escapeHtml(item.suggestion.label)}</span><small title="${escapeHtml(item.suggestion.detail)}">${escapeHtml(item.suggestion.detail)}</small></span>
+      <span class="market-return"><small>短期</small><strong>${escapeHtml(timing.shortLabel)}</strong></span>
+      <span class="market-return"><small>长期</small><strong>${escapeHtml(timing.longLabel)}</strong></span>
+      <span class="market-evidence"><span>近5日 <b class="${signedClass(item.returns.week)}">${formatPct(item.returns.week)}</b></span><span>近20日 <b class="${signedClass(item.returns.month)}">${formatPct(item.returns.month)}</b></span><span>近60日 <b class="${signedClass(item.returns.quarter)}">${formatPct(item.returns.quarter)}</b></span><span>近120日 <b class="${signedClass(item.returns.halfYear)}">${formatPct(item.returns.halfYear)}</b></span></span>
+      <span class="market-structure"><span class="structure-chip ${structure.state}">${escapeHtml(structure.label)}</span><small>截至 ${escapeHtml(timing.asOfDate)} · ${escapeHtml(timing.observedRange)}</small></span>
+      <span class="market-decision"><span class="timing-chip ${timing.state}">${escapeHtml(timing.label)}</span><small title="${escapeHtml(timing.trigger)}">下一触发：${escapeHtml(timing.trigger)}</small></span>
     </button>`;
     }).join("");
     const marketButtons = $$('[data-market-code]');
@@ -662,6 +764,7 @@ function renderMarketOpportunities(payload) {
   }
   const updated = new Date(payload.generatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   setText("#marketOpportunitiesUpdated", `排行净值日 ${payload.rankDate || "--"} · ${updated} 完成板块去重`);
+  renderEntryWindowSummary();
 }
 
 async function refreshMarketOpportunities() {
@@ -718,6 +821,16 @@ function renderPortfolio(payload) {
   setText("#waitCount", derivedItems.filter(({ derived }) => derived.entry.state === "wait").length);
   setText("#takeProfitCount", derivedItems.filter(({ derived }) => derived.entry.state === "take-profit").length);
   setText("#sellCount", derivedItems.filter(({ derived }) => ["avoid", "reduce", "emergency", "sell"].includes(derived.entry.state)).length);
+  const holdingCount = derivedItems.filter(({ derived }) => derived.hasHolding).length;
+  const watchlistCount = derivedItems.length - holdingCount;
+  const candidateCount = derivedItems.filter(({ derived }) => ["base", "trial"].includes(derived.entry.state) && !derived.hasHolding).length;
+  setText("#entryStatusHint", candidateCount
+    ? `${candidateCount} 只自选已通过基础条件；持仓单独跟踪。`
+    : holdingCount && watchlistCount
+      ? `${holdingCount} 只持仓单独跟踪；${watchlistCount} 只自选尚未同时通过趋势、动能与风险校验。`
+      : watchlistCount
+        ? "自选尚未同时通过趋势、动能与风险校验。"
+        : "当前只有持仓数据；持仓不计入新建仓统计。");
   setText("#defaultTargetLabel", `${state.strategySettings.defaultTakeProfitPct.toFixed(0)}%`);
   setText("#marketStatus", payload.market.label);
   const verified = valid.filter((item) => item.data.quality === "verified" && item.data.lagBusinessDays === 0).length;
@@ -729,6 +842,7 @@ function renderPortfolio(payload) {
   state.nextRefreshAt = Date.now() + payload.refreshAfterSeconds * 1000;
   renderTrendLeaders(valid);
   renderPortfolioRows();
+  renderEntryWindowSummary();
   notifyActionChanges(valid.map((item) => ({ ...item, entry: compositeFor(item).entry })));
 }
 

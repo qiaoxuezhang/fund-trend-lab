@@ -447,8 +447,9 @@ function assessMarketOpportunity(candidate) {
   const fundamentalsUsable = research.fundamentalScore != null && research.coverage >= 15;
   const fundamentalsPass = fundamentalsUsable && research.fundamentalScore >= -10;
   const overextended = analysis.current.rsi >= 74
-    || analysis.current.volatility >= 45
-    || ranking.monthReturn >= 25;
+    || analysis.current.j >= 105
+    || ranking.weekReturn >= 8
+    || ranking.monthReturn >= 15;
   if (dataQuality !== "verified") return { state: "wait", label: "数据待确认", detail: "排行净值与正式历史净值尚未完成一致性校验，暂不用于建仓参考" };
   if (technical.state === "risk" || structure?.state === "broken") return { state: "sell", label: "暂不跟随", detail: "中长期结构已进入防守区，即使区间收益靠前也不作为建仓候选" };
   if (structure?.state === "pullback") return { state: "wait", label: "回调确认", detail: "中长期骨架暂未破坏，但短期动量已经转弱；等待 MA20 止跌或动能转正后再评估建仓" };
@@ -540,7 +541,9 @@ async function buildMarketOpportunities(profile) {
       drawdown: candidate.analysis.current.drawdown,
       volatility: candidate.analysis.current.volatility,
       rsi: candidate.analysis.current.rsi,
-      structure: candidate.analysis.current.structure
+      j: candidate.analysis.current.j,
+      structure: candidate.analysis.current.structure,
+      decision: candidate.analysis.decision
     },
     fundamental: { score: candidate.research.fundamentalScore, coverage: candidate.research.coverage },
     dataQuality: candidate.dataQuality,
